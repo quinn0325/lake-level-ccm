@@ -3,7 +3,7 @@ title: "Technical Appendix — Reproducing the Analysis"
 subtitle: "Causal Exploration and Predictability of Lake Water Level: Evidence from Two Regulated Canadian River Basins"
 ---
 
-**Code and data repository:** <https://github.com/USERNAME/lake-level-ccm>
+**Code and data repository:** <https://github.com/quinn0325/lake-level-ccm>
 
 This appendix is self-contained: it states where the source data comes from,
 what software is required, in what order the code must be run, which parameters

@@ -16,7 +16,9 @@ The full analysis takes 8-18 hours, almost all of it in the CCM stage. You do
 not need to run it to check this work. Instead:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+git clone https://github.com/quinn0325/lake-level-ccm.git
+cd lake-level-ccm
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python verify.py
 ```

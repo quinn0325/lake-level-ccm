@@ -61,15 +61,33 @@ from shapely.ops import nearest_points
 # --------------------------------------------------------------------------
 # 路径与常量
 # --------------------------------------------------------------------------
-HYDROLAKES = Path("/Users/zhouquan/Downloads/HydroLAKES_polys_v10_shp/"
-                  "HydroLAKES_polys_v10_shp/HydroLAKES_polys_v10.shp")
-NE_DIR = Path("/Users/zhouquan/Documents/Codex/2026-08-16/"
-              "npx-skills-add-blader-humanizer-global/work")
+# 这张图需要两份本地下载的地理数据，体积过大不随仓库分发（HydroLAKES 约 1 GB）。
+# 用环境变量指向你自己的下载位置：
+#
+#   HydroLAKES v1.0 多边形     https://www.hydrosheds.org/products/hydrolakes
+#     export CCM_HYDROLAKES_SHP=/path/to/HydroLAKES_polys_v10.shp
+#
+#   Natural Earth 1:50m 国界与省界已裁好随仓库分发，无需下载；如要用完整版：
+#     https://www.naturalearthdata.com/downloads/50m-cultural-vectors/
+#     export CCM_NATURALEARTH_DIR=/path/to/dir/holding/the/two/geojson
+#
+# 首次运行会把这十个湖裁切出来缓存到 results/figures/_cache_study_lakes.gpkg，
+# 之后重画就不再需要原始文件。仓库里已带该缓存，因此只有想从头重建时才需要它们。
+HYDROLAKES = Path(os.environ.get(
+    "CCM_HYDROLAKES_SHP", "HydroLAKES_polys_v10.shp"))
+# Natural Earth 的两层已裁到北美范围随仓库分发（合计约 670 KB），
+# 因此默认不需要任何下载；设了环境变量就用你自己的完整版本。
+_NE_BUNDLED = Path(__file__).resolve().parents[2] / "figures"
+NE_DIR = Path(os.environ.get("CCM_NATURALEARTH_DIR", _NE_BUNDLED))
 NE_COUNTRIES = NE_DIR / "ne_50m_admin_0_countries.geojson"
 NE_PROVINCES = NE_DIR / "ne_50m_admin_1_states_provinces_lines.geojson"
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "results" / "figures"
-CACHE = OUT_DIR / "_cache_study_lakes.gpkg"      # 1 GB 源文件只读一次
+ROOT = Path(__file__).resolve().parents[2]
+OUT_DIR = ROOT / "results" / "figures"
+# 裁切好的十个湖泊多边形随仓库分发，因此没有 HydroLAKES 原始文件也能重画此图。
+CACHE = ROOT / "figures" / "_cache_study_lakes.gpkg"
+if not CACHE.exists():                            # 没有就退回到旧位置并现场生成
+    CACHE = OUT_DIR / "_cache_study_lakes.gpkg"
 
 CRS = 3347          # Canada Atlas Lambert
 FIG_WIDTH_CM = 16.0  # 论文正文宽
@@ -186,9 +204,19 @@ def load_lakes() -> gpd.GeoDataFrame:
     return g
 
 
+CONTEXT_CACHE = CACHE.parent / "_cache_context_lakes.gpkg"
+
+
 def load_context_lakes(bounds_wgs84) -> gpd.GeoDataFrame:
-    """面板范围内其余较大湖泊，作为浅色背景，避免研究湖泊像孤岛。"""
+    """面板范围内其余较大湖泊，作为浅色背景，避免研究湖泊像孤岛。
+
+    与研究湖泊同理：结果随仓库分发，没有 HydroLAKES 原始文件也能画。
+    缓存里存的是三个面板范围的并集，这里按当前范围再裁一次。
+    """
     minx, miny, maxx, maxy = bounds_wgs84
+    if CONTEXT_CACHE.exists():
+        g = gpd.read_file(CONTEXT_CACHE, bbox=(minx, miny, maxx, maxy))
+        return g[["Hylak_id", "geometry"]]
     g = gpd.read_file(HYDROLAKES, bbox=(minx, miny, maxx, maxy),
                       where="Lake_area > 20", engine="pyogrio")
     return g[["Hylak_id", "geometry"]]

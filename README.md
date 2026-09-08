@@ -114,7 +114,11 @@ The remaining dependencies (`scipy`, `statsmodels`, `pmdarima`, `xgboost`,
 `modal` is imported by the cloud-parallel scripts but a **Modal account is not
 required** — `run_local.py` reimplements every stage with local multiprocessing.
 `geopandas` is needed only to redraw Figure 3.1 (the study-area map) and to run
-the acquisition stage.
+the acquisition stage. Figure 3.1 needs no downloads of its own: the lake and
+boundary polygons it draws are clipped to the study area and shipped in
+`figures/` (3.3 MB), so `pip install geopandas pyogrio` is enough. Set
+`CCM_HYDROLAKES_SHP` and `CCM_NATURALEARTH_DIR` only if you want to redraw it
+from the full source layers.
 
 ### Reproduction tolerance
 

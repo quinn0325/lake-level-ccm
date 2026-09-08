@@ -1,0 +1,26 @@
+# 版本与 Modal 镜像保持一致，确保本地与远程结果可比。
+
+# ---- 必须锁定 ----
+# pyEDM 自 2.5.0 起移除了 CCM() 的 sequential 参数并改为默认多进程，
+# 本项目部分脚本依赖 2.5.0 之前的 API；实测 2.5.6 会直接抛
+# TypeError: CCM() got an unexpected keyword argument 'sequential'。
+pyEDM==2.4.0
+
+# pandas 3.x 对链式赋值的行为有变（Copy-on-Write），本项目未针对其适配。
+pandas==2.2.2
+numpy==1.26.4
+
+# ---- 其余依赖 ----
+scipy
+statsmodels
+pmdarima
+xgboost
+networkx
+matplotlib
+
+# tigramite 仅 PCMCI 分析需要；PCMCI 未纳入正文，如不复现该部分可省略。
+tigramite
+
+# modal 仅作为普通 Python 包被 import（Volume.from_name 是惰性调用）。
+# 本地运行不需要 Modal 账户；仅在使用 `modal run` 并行时才需要。
+modal

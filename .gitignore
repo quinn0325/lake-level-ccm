@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
+
+# 大体积中间产物：TIFF 版图（单张 24-82 MB）与运行日志不入库
+*.tiff
+run.log
+results/figures/

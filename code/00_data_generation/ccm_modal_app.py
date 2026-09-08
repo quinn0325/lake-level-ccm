@@ -152,13 +152,6 @@ REGULATION_SUBPERIODS = {
     "Grant_Devine_Lake": (2015, 2024),
 }
 
-LAKE_NAME_SEARCH_TERM = {
-    "Lake_of_the_Woods": "Woods", "Rainy_Lake": "Rainy", "Southern_Indian_Lake": "Southern Indian",
-    "Okanagan_Lake": "Okanagan", "Vaseux_Lake": "Vaseux",
-    "Playgreen_Lake": "Playgreen", "Kiskitto_Lake": "Kiskitto",
-    "Sipiwesk_Lake": "Sipiwesk",
-}
-
 
 @app.function(
     image=image,
@@ -314,7 +307,7 @@ def process_lake_modal(lake_name: str, n_surrogates: int = 200, sample: int = 10
     result = {"lake_name": lake_name, "status": "started", "pipeline_version": PIPELINE_VERSION,
               "config_fingerprint": config_fingerprint}
     try:
-        combined_wl, wide_wl, coverage_wl = fetch_lake_water_level(lake_name, method="anomaly_mean")
+        combined_wl, wide_wl, coverage_wl = fetch_lake_water_level(lake_name)
         result["coverage_mean"] = coverage_wl["coverage_fraction"].mean()
         result["wide_wl"] = wide_wl
 

@@ -1,74 +1,38 @@
+"""数据获取与嵌入参数：WSC 水位/调控流量、ERA5-Land、HydroLAKES/HydroBASINS 掩膜。
+
+配置（LAKES、REGULATION_STATIONS 等）从 ccm_modal_app 导入，不在这里重复定义。
+
+贯穿全文件的一条规矩：**任何时候都不要 dropna**
+------------------------------------------------
+喂给 pyEDM 的序列必须保留完整的日历月份索引，缺测的月份就留成真实的 NaN，不删行、
+不重新编号。原因是 pyEDM 的延迟嵌入完全按数据行的物理顺序算，不看 time 列的实际
+数值——一旦 dropna 再 reset_index，缺口两侧物理上相隔几个月的两行就会被当成"相邻的
+一个月"来构造嵌入向量。那是编出来的邻接关系，不是真实动态，而且不会报错，只会悄悄
+把结果算错。
+
+保留 NaN 就够了：Simplex/CCM 默认 ignoreNan=True，遇到某个预测需要的历史点是 NaN
+会正确地跳过并返回 NaN，不会拿假邻居硬凑。这不是在实现某篇论文的方法（例如 Clark
+et al. 2015 的 multispatial CCM 是一套带 bootstrap 的独立算法，本项目没有实现），
+只是让 pyEDM 按它自己文档"Disjoint prediction sets"那条说明正确处理缺测。
+
+这条规矩对调用方同样成立：传给 get_embedding_params 的必须是保留了完整索引和真实
+NaN 的序列，传 `.dropna().values` 等于让这里的处理全部白做。
 """
-CCM湖泊研究流水线核心算法函数库（2026-08-09重写版）。
-
-跟旧版(git历史里的ccm_lib.py，本次重写前的最后状态另存为ccm_lib.py.bak_pre_v11)相比，
-本次重写只改了"缺测数据怎么喂给pyEDM"这一件事，其余全部函数(WSC/ERA5抓取、HydroLAKES/
-HydroBASINS解析、因果网络分析、SARIMAX/XGBoost预测对照)逐行保留，没有改动。
-
-============================================================
-本次修复的问题，以及为什么这样修（供以后维护时对照）
-============================================================
-
-旧版的_pair_panel/surrogate_significance/lag_scan都是"dropna() -> reset_index(drop=True)"，
-把两个变量各自缺测的行删掉、剩下的行重新从0连续编号，再喂给pyEDM。这样做的后果是：
-如果两个变量的缺测模式不是"整段连续缺失"而是"分散成好几段"(比如某个RegFlow测站每年冬季
-固定停测，30年下来缺测拼成三十多段)，dropna+重编号之后，pyEDM会把物理上相隔好几个月的
-两行数据当成"挨着的1个月"来构造延迟嵌入向量——这是编出来的假邻接关系，不是真实的动态。
-pyEDM/rEDM的延迟嵌入完全按数据行的物理顺序算，不看time列的实际数值，所以这个bug不会报错、
-只会悄悄把结果算错。
-
-这次实测确认了两件事(2026-08-09 Modal容器里用pyEDM 2.5.6验证过)：
-  1. pyEDM.CCM()这个版本的函数签名里已经没有旧式的`lib="1 80 81 160"`多段边界写法了，
-     换成了`validLib`(布尔数组)。但`validLib=False`只能防止某一行被别的预测借用当近邻，
-     没法阻止这一行自己被拿去硬预测——用一个刻意留了缺口的人造数据集测过：不管validLib
-     排不排除跨缺口那一行，它自己的预测值完全一样，说明validLib单独用是不完整的。
-  2. 真正管用、而且简单得多的做法是：**根本不要dropna**。把两个变量对齐到完整的日历月份
-     索引(该有多少行就有多少行，缺测的月份就是真实的NaN，不删行不重新编号)，直接喂给
-     pyEDM——它的Simplex/CCM默认`ignoreNan=True`，遇到某个预测需要的历史点是NaN时会
-     正确地跳过(返回NaN)，不会拿假邻居瞎猜。同样的人造缺口数据集验证过：完整日历表方案下，
-     跨缺口那一行的预测值正确地变成NaN；dropna重编号方案下，那一行会被硬凑出一个错误的
-     预测值。
-
-这个修复不是在复现某篇具体论文的方法(比如Clark et al. 2015的multispatial CCM，那篇用的是
-NA分段拼接+bootstrap+dewdrop regression，是一套完整的独立算法，我们没有实现它的bootstrap
-机制)——这里只是让pyEDM按它自己文档说的方式正确处理缺测，不需要额外的算法。如果论文方法论
-里要交代这一步，应该引用pyEDM/rEDM官方文档里"Disjoint prediction sets"那条说明，而不是引用
-Clark 2015。
-
-这个修复影响的不只是CCM那一步，连"选嵌入参数(tau, E)"这一步也受影响——average_mutual_
-information原来会在算lag pair之前先把NaN删掉(np.isnan过滤)，这跟dropna是同一类bug，这次
-一并改成先按位置构造lag pair、再对每一对联合去掉缺测，不提前压缩掉时间结构。**调用方
-(ccm_modal_app.py)传参数给get_embedding_params时也不能再传`.dropna().values`了，得传
-保留了完整日历索引和真实NaN的Series/array，不然这里的修复等于白做**——这一处改动在
-ccm_modal_app.py里，不在这个文件里，改的时候要一起看。
-
-============================================================
-LAKES/REGULATION_STATIONS等配置仍从ccm_modal_app导入，不在本文件重复定义。
-============================================================
-"""
-import inspect
 import io
-import itertools
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pyEDM
 import requests
-from scipy import stats
 from shapely.geometry import Point, box
-from statsmodels.stats.multitest import multipletests
 
 from ccm_modal_app import (
-    LAKES, REGULATION_STATIONS, REGULATION_SUBPERIODS, VARS,
+    LAKES, REGULATION_STATIONS, REGULATION_SUBPERIODS,
     START_YEAR, END_YEAR, STATION_COORDS, LAKE_OUTLET_STATION,
-    LAKE_NAME_SEARCH_TERM,
 )
 
 WSC_BASE_URL = "https://wateroffice.ec.gc.ca/services/monthly_data/csv/inline"
-
-_ccm_params = inspect.signature(pyEDM.CCM).parameters
-CCM_SEQUENTIAL_KWARGS = {"sequential": True} if "sequential" in _ccm_params else {"parallel": False}
 
 CDS_VARIABLES = {
     "T": "2m_temperature", "P": "total_precipitation", "Evap": "total_evaporation",
@@ -76,7 +40,7 @@ CDS_VARIABLES = {
 }
 
 
-# ============ WSC水位抓取（未改动） ============
+# ============ WSC 水位抓取 ============
 
 def fetch_wsc_station_level(station_id, start_year=START_YEAR, end_year=END_YEAR, timeout=30):
     """Fetch monthly mean water level for one WSC station."""
@@ -93,24 +57,15 @@ def fetch_wsc_station_level(station_id, start_year=START_YEAR, end_year=END_YEAR
     return df[["date", "station_id", "water_level", "symbol"]].sort_values("date").reset_index(drop=True)
 
 
-def combine_station_water_levels(wide, method="anomaly_mean", baseline_index=None, min_station_fraction=0.0):
+def combine_station_water_levels(wide):
     """合成多站水位；baseline_index用于只用训练窗估计站点基准差。"""
     wide = wide.sort_index()
-    min_count = max(1, int(np.ceil(wide.shape[1] * min_station_fraction)))
-    enough_coverage = wide.notna().sum(axis=1) >= min_count
-    if method == "raw_mean":
-        combined = wide.mean(axis=1, skipna=True)
-    elif method == "anomaly_mean":
-        baseline = wide if baseline_index is None else wide.reindex(pd.DatetimeIndex(baseline_index))
-        station_means = baseline.mean(axis=0, skipna=True)
-        global_mean = station_means.mean(skipna=True)
-        combined = (wide - station_means).mean(axis=1, skipna=True) + global_mean
-    else:
-        raise ValueError(f"unknown method {method}")
-    return combined.where(enough_coverage)
+    station_means = wide.mean(axis=0, skipna=True)
+    combined = (wide - station_means).mean(axis=1, skipna=True) + station_means.mean(skipna=True)
+    return combined.where(wide.notna().any(axis=1))
 
 
-def fetch_lake_water_level(lake_name, method="anomaly_mean", start_year=START_YEAR, end_year=END_YEAR):
+def fetch_lake_water_level(lake_name, start_year=START_YEAR, end_year=END_YEAR):
     """Fetch + combine all WSC stations for a lake."""
     stations = LAKES[lake_name]["stations"]
     station_dfs = {}
@@ -131,11 +86,11 @@ def fetch_lake_water_level(lake_name, method="anomaly_mean", start_year=START_YE
         "n_stations_reporting": n_stations_used,
         "coverage_fraction": n_stations_used / wide.shape[1],
     })
-    combined = combine_station_water_levels(wide, method=method)
+    combined = combine_station_water_levels(wide)
     return combined, wide, coverage_df
 
 
-# ============ WSC调控流量抓取（未改动） ============
+# ============ WSC 调控流量抓取 ============
 
 def fetch_wsc_station_flow(station_id, start_year=START_YEAR, end_year=END_YEAR, timeout=30):
     """Fetch monthly mean regulated discharge (flow) for one WSC station.
@@ -184,7 +139,7 @@ def fetch_lake_regulation_flow(lake_name, start_year=START_YEAR, end_year=END_YE
     return total_flow
 
 
-# ============ ERA5-Land下载（未改动） ============
+# ============ ERA5-Land 下载 ============
 
 def build_cds_request(area_bbox, years, variables=None):
     variables = variables or list(CDS_VARIABLES.values())
@@ -216,7 +171,7 @@ def try_fetch_era5_land(lake_name, area_bbox, era5_dir, years=range(START_YEAR, 
         return None
 
 
-# ============ 流域/湖泊掩膜、Hylak_id解析（未改动） ============
+# ============ 流域/湖泊掩膜、Hylak_id 解析 ============
 
 def grid_cells_intersecting_polygon(poly, res=0.1, buffer_deg=0.15):
     """返回与给定多边形相交的所有 0.1度 ERA5-Land 网格盒子。"""
@@ -285,7 +240,7 @@ def resolve_lake_area_bbox(lake_name, hydrolakes_gdf, hydrobasins_gdf):
     # 十个研究湖泊全在加拿大境内。跨境湖需要关掉国家过滤（HydroLAKES 会把
     # 整个湖标成对岸国家），本研究没有这种情况。
     country = "Canada"
-    hylak_id, _candidates = resolve_hylak_id(hydrolakes_gdf, LAKE_NAME_SEARCH_TERM[lake_name], ref_lonlat, country=country)
+    hylak_id, _ = resolve_hylak_id(hydrolakes_gdf, ref_lonlat, country=country)
     if hylak_id is None:
         return None, None, None, None
     pour_row = hydrolakes_gdf.loc[hydrolakes_gdf["Hylak_id"] == hylak_id].iloc[0]
@@ -301,13 +256,13 @@ def resolve_lake_area_bbox(lake_name, hydrolakes_gdf, hydrobasins_gdf):
     return hylak_id, lake_cells, basin_cells, area_bbox
 
 
-def resolve_hylak_id(hydrolakes_gdf, search_term, ref_lonlat, country="Canada", search_buffer_deg=0.5, max_dist_deg=0.05):
+def resolve_hylak_id(hydrolakes_gdf, ref_lonlat, country="Canada",
+                     search_buffer_deg=0.5, max_dist_deg=0.05):
     """按坐标空间位置解析Hylak_id：优先看有没有多边形直接包含参照点，其次找离参照点最近的多边形。
     关键点：这里对全部Lake_type一起解析(不预先筛type∈{1,3})，调用方自己决定要不要按类型过滤——
     如果解析前就只看天然湖多边形，会把本该落在附近水库(type=2)里的测站，误配到旁边一个不相关
-    的小天然水体上(已验证案例：Tobin_Lake、Sugar_Lake_Reservoir、Coquitlam_Lake、
-    Duncan_Reservoir都曾被这样误判)。
-    search_term 参数保留但不参与筛选（历史遗留，仅为兼容旧调用签名）。
+    的小天然水体上——早期按名字+类型筛选时，多个测站就是这样被误配到旁边不相关的
+    水体上的。
     """
     lon, lat = ref_lonlat
     ref_pt = Point(ref_lonlat)
@@ -328,14 +283,14 @@ def resolve_hylak_id(hydrolakes_gdf, search_term, ref_lonlat, country="Canada", 
     return int(best["Hylak_id"]), subset.head(10)
 
 
-# ============ 单位换算、去季节化、面板拼装（未改动） ============
+# ============ 单位换算、去季节化、面板拼装 ============
 
 def _days_in_month(series):
     idx = pd.DatetimeIndex(series.index)
     return pd.Series(idx.days_in_month, index=series.index, dtype=float)
 
 
-def convert_era5_units(var_name, series, monthly_total=True):
+def convert_era5_units(var_name, series):
     """ERA5-Land单位换算。
     T: K -> degC；SWE: m water equivalent -> mm；P/R/Evap: m/day -> mm/month（monthly_total=True）或mm/day。
     ERA5 total_evaporation通常以向下通量为正，蒸发为负，因此取负号让Evap表示正向蒸发量。
@@ -346,11 +301,9 @@ def convert_era5_units(var_name, series, monthly_total=True):
     if var_name == "SWE":
         return series * 1000.0
     if var_name in ("P", "R"):
-        out = series * 1000.0
-        return out * _days_in_month(series) if monthly_total else out
+        return series * 1000.0 * _days_in_month(series)
     if var_name == "Evap":
-        out = -series * 1000.0
-        return out * _days_in_month(series) if monthly_total else out
+        return -series * 1000.0 * _days_in_month(series)
     raise ValueError(f"unknown variable {var_name}")
 
 
@@ -362,9 +315,8 @@ def deseasonalize(series, train_end=None):
     那样测试期某个月的真实值，在被算进"该月气候态均值"的那一刻，就已经把自己的
     信息用于标准化自己了——这是发生在 train/test 切分之前的信息泄漏。
 
-    本实现与 01_shared/ccm_full_pipeline.py 中的同名函数逐字一致（该处早已修复，
-    此处为对齐补上）。train_end=None 时退化为用全部数据计算，仅供探索性场景，
-    正式流程必须由调用方传入。
+    train_end=None 会退化成用全序列计算，只在探索性场景下可用；正式流程必须由调用方
+    显式传入。01_shared/ccm_full_pipeline.py 里有一份逐字相同的实现。
     """
     train_series = series if train_end is None else series.iloc[:train_end]
     monthly_clim = train_series.groupby(train_series.index.month).mean()
@@ -374,8 +326,8 @@ def deseasonalize(series, train_end=None):
 
 def build_variable_panel(wl_series, era5_vars=None, forecast_horizon=None):
     """把 WL 与 ERA5-Land 各变量对齐成一张月度面板，逐变量去季节化。返回 (原始面板, 去季节化面板)。
-    reindex到完整日历月份范围(min~max, 逐月)——这一步本来就保留了真实NaN，是下游
-    _pair_panel等函数能正确工作的前提，不要在这之后的任何环节再对整张面板做listwise dropna。
+    reindex 到完整日历月份范围(min~max, 逐月)，保留真实 NaN——这是下游一切处理的前提，
+    此后任何环节都不要对整张面板做 listwise dropna（见文件头）。
 
     forecast_horizon 必须由调用方显式传入：去季节化的月度气候态只用训练窗口
     (排除最后 forecast_horizon 个月)计算，否则测试期信息会经由气候态均值泄漏。
@@ -397,8 +349,8 @@ def simplex_self_predict_rho(values, E, tau, exclusion_radius=None):
     Simplex()默认的ignoreNan=True正确跳过需要缺测点的预测，不需要额外代码。
 
     如果这段数据缺测拼接过于零散(某个候选E/tau组合下连一个有效近邻都凑不出来)，
-    pyEDM底层(scipy cKDTree.query)会直接抛异常而不是返回一个低分——已在Crooked_Lake
-    的RegFlow上实测到这个情况(32段，最短的只有1个月)。这里接住异常返回NaN，让调用方
+    pyEDM底层(scipy cKDTree.query)会直接抛异常而不是返回一个低分——调控流量站常年
+    冬季停测，三十年下来能拼成三十多段、最短的只有一个月。这里接住异常返回NaN，让调用方
     (select_E)把这个候选当作"此路不通"处理，不要让整个嵌入参数选择跟着崩掉。"""
     n = len(values)
     df = pd.DataFrame({"time": np.arange(n), "v": values})
@@ -421,7 +373,7 @@ def select_E(values, tau, candidate_E=range(2, 11), fallback_E=2):
 
     原来直接调pyEDM.EmbedDimension()一次性扫描全部候选E——这个函数内部用多进程池
     并行跑每个E，只要其中一个E因为数据太碎、找不到有效近邻而抛异常，整个进程池
-    连带崩溃、拿不到任何E的结果(已在Crooked_Lake的RegFlow上实测到)。改成逐个E值
+    连带崩溃、一个E的结果都拿不到。改成逐个E值
     单独调simplex_self_predict_rho、每个都单独接住异常，一个E失败不影响其他E值
     继续尝试；如果全部候选E都失败，退回fallback_E=2并在返回的curve里标注清楚，
     不能让整个湖泊的计算因为一个变量选不出E就整体失败。"""

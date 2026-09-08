@@ -1383,7 +1383,7 @@ def best_positive_lag(scan):
     return int(best_row["lag"]), float(best_row["rho"])
 
 
-def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix="", drop_d0=False):
+def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix=""):
     """WL 的全部祖先变量 → 预测特征滞后。
 
     有直接边的祖先原先直接沿用因果域的 obs_lag，**包括 d = 0**——而 direct 与
@@ -1395,8 +1395,6 @@ def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix="", drop_d
     ℓ ∈ [1, 12]，且 min_exog_lag = 0 让这些方法在任何预见期下都需要起点之后的信息。
     此处补上与另两个分支相同的处理：不整条丢弃，在预测域内重新求最优滞后。
 
-    drop_d0=True 时改为整条丢弃，供敏感性变体使用（与 direct / neighbor 分支的
-    drop_d0 行为一致）。
     """
     if "WL" not in G.nodes():
         return {}
@@ -1410,9 +1408,6 @@ def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix="", drop_d
                 lags[var] = edge_lag
                 continue
             # 时序保留规则已排除 d < 0，此处只可能是 d = 0。
-            if drop_d0:
-                log(f"{log_prefix}祖先{var}: 因果最优 d={edge_lag}，按 drop_d0 变体丢弃")
-                continue
             new_lag, new_rho = forecast_constrained_lag(
                 ccm_train_panel, var, "WL", embed_params)
             if new_lag is None:
@@ -1433,20 +1428,6 @@ def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix="", drop_d
     return lags
 
 
-def select_all_var_lags(ccm_train_panel, embed_params):
-    lags = {}
-    for var in embed_params:
-        if var == "WL":
-            continue
-        scan = lag_scan(ccm_train_panel, var, "WL", embed_params, lags=range(-12, 13))
-        if scan.empty:
-            continue
-        l_star, rho_star = best_positive_lag(scan)
-        if l_star is not None:
-            lags[var] = l_star
-    return lags
-
-
 def select_all_var_lags_xcorr(ccm_train_panel, embed_params, wl_col="WL",
                               min_lag=1, max_lag=12, min_obs=20, log_prefix=""):
     """关联式基线（All_vars / Stepwise）的滞后选择：用与目标水位的滞后 Pearson 相关，
@@ -1454,8 +1435,8 @@ def select_all_var_lags_xcorr(ccm_train_panel, embed_params, wl_col="WL",
 
     为什么需要它
     ------------
-    原 `select_all_var_lags()` 用 `lag_scan()`（CCM 交叉映射）为基线挑滞后，
-    导致所谓"非因果基线"实际继承了 CCM 的滞后识别结果——而识别正确滞后正是
+    早期实现用 `lag_scan()`（CCM 交叉映射）为基线挑滞后，导致所谓"非因果基线"
+    实际继承了 CCM 的滞后识别结果——而识别正确滞后正是
     CCM 贡献的主要组成部分。这使 RQ3（因果信息是否带来额外预测价值）被系统性低估。
     实测：改用互相关后，45 个变量中 38 个（84%）的滞后发生改变。
 

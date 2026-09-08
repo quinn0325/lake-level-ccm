@@ -296,7 +296,7 @@ def _filter_long_gap_vars(p, panel_deseason, lag_sets, lake_name):
     }, long_gap_vars
 
 
-def _load_neighbor_series(p, pd, panel_deseason, neighbor_lags, lake_name):
+def _load_neighbor_series(p, panel_deseason, neighbor_lags, lake_name):
     """加载邻居湖水位、对齐到本湖面板索引，并施加与本湖变量相同的长缺口规则。
 
     邻居序列原本在建模处才加载，绕过了 _filter_long_gap_vars，导致
@@ -335,7 +335,6 @@ def run_lake_synchrony_filtered(
     xgb_params: dict,
     within_edges_records: list[dict],
     inter_edges_records: list[dict],
-    variant: str = "main",
 ) -> dict:
     import pickle
     import pandas as pd
@@ -373,10 +372,6 @@ def run_lake_synchrony_filtered(
     direct_lags = p.select_direct_predictor_lags(lake_edges)
     for _v, _l in list(direct_lags.items()):
         if _l < p.FORECAST_LAG_MIN:
-            if variant == "drop_d0":       # 对照变体：不重新求最优，整条丢弃
-                direct_lags.pop(_v)
-                print(f"[{lake_name}] {_v}→WL: 因果最优 d={_l}，按 drop_d0 变体丢弃", flush=True)
-                continue
             _nl, _nr = p.forecast_constrained_lag(ccm_train_panel, _v, "WL", embed_params)
             if _nl is None:
                 direct_lags.pop(_v)
@@ -386,27 +381,15 @@ def run_lake_synchrony_filtered(
                 print(f"[{lake_name}] {_v}→WL: 因果最优 d={_l} → 预测域最优 d={_nl} (rho={_nr:.3f})", flush=True)
     # ancestors 分支同样受预测域约束：有直接边的祖先此前直接沿用因果域 obs_lag，
     # d=0 的边因此以当期外生变量入模（见 select_ancestor_lags 的说明）。
-    # 现由该函数内部统一走 forecast_constrained_lag，drop_d0 变体行为也与另两支一致。
+    # 现由该函数内部统一走 forecast_constrained_lag，三个分支口径一致。
     ancestor_lags = p.select_ancestor_lags(
-        G,
-        ccm_train_panel,
-        embed_params,
-        log_prefix=f"[{lake_name}] ",
-        drop_d0=(variant == "drop_d0"),
-    )
+        G, ccm_train_panel, embed_params, log_prefix=f"[{lake_name}] ")
     # 基线（All_vars / Stepwise）的滞后改用滞后 Pearson 相关，不再沿用 CCM 交叉映射。
     # 原实现使基线无偿继承 CCM 的滞后识别，令 RQ3 被系统性低估（实测 84% 的滞后会变）。
     # 与 CCM 保持相同的预处理、相同的 0–12 搜索窗口、相同的 conditional-information
-    # 假设（两侧均不施加 d ≥ h 约束）。旧函数 select_all_var_lags 保留以便回退对照。
-    if variant == "baseline_ccmlag":       # 对照变体：基线沿用 CCM 的 lag_scan
-        all_var_lags = p.select_all_var_lags(ccm_train_panel, embed_params)
-    else:
-        all_var_lags = p.select_all_var_lags_xcorr(
-            ccm_train_panel,
-            embed_params,
-            min_lag=0 if variant == "xcorr_d0" else 1,
-            log_prefix=f"[{lake_name}] ",
-        )
+    # 假设（两侧均不施加 d ≥ h 约束）。
+    all_var_lags = p.select_all_var_lags_xcorr(
+        ccm_train_panel, embed_params, min_lag=1, log_prefix=f"[{lake_name}] ")
     # stepwise 不在此处选：长缺口筛选必须先于前向选择，见下方 lag_sets 处的说明。
 
     neighbor_lags = p.load_neighbor_lags(inter_edges, lake_name)
@@ -414,10 +397,6 @@ def run_lake_synchrony_filtered(
     # 湖间面板由两湖 WL 对齐而成，效应湖的 WL 嵌入参数即扫描所需。
     for _nb, _l in list(neighbor_lags.items()):
         if _l < p.FORECAST_LAG_MIN:
-            if variant == "drop_d0":
-                neighbor_lags.pop(_nb)
-                print(f"[{lake_name}] 邻居 {_nb}: 因果最优 d={_l}，按 drop_d0 变体丢弃", flush=True)
-                continue
             try:
                 _pnl, _, _emb_eff = p.load_pair_panel_for_connectivity(_nb, lake_name)
                 _nl, _nr = p.forecast_constrained_lag(
@@ -433,7 +412,7 @@ def run_lake_synchrony_filtered(
                 print(f"[{lake_name}] 邻居 {_nb}: 因果最优 d={_l} → 预测域最优 d={_nl} (rho={_nr:.3f})", flush=True)
     # 邻居须在此处（而非建模处）加载：只有对齐到本湖面板后才能量测缺口。
     neighbor_cols, neighbor_combined_lags, neighbor_lags = _load_neighbor_series(
-        p, pd, panel_deseason, neighbor_lags, lake_name)
+        p, panel_deseason, neighbor_lags, lake_name)
 
     old_direct_lags = _original_within_direct_lags(pd, lake_name)
     old_neighbor_lags = _original_neighbor_lags(pd, lake_name)
@@ -703,26 +682,9 @@ def write_csv_to_volume(csv_text: str, path: str):
     print(f"Wrote {path}", flush=True)
 
 
-# ---------------------------------------------------------------------------
-# 敏感性分析：三个设计决策的对照变体
-# ---------------------------------------------------------------------------
-# 主结果(VARIANT="main")锁定了三项选择，每项都有替代做法。为了让"选择是否
-# 实质影响结论"可被检验，这里把替代做法做成开关，**用同一份代码产出**，
-# 从而与主结果严格可比（早期的对照快照跑于长缺口修复之前，代码不同、不可比）。
-#
-#   main             基线滞后用互相关(1..12)；因果最优 d=0 的边在预测域重新求最优
-#   baseline_ccmlag  基线滞后改用 CCM 的 lag_scan（即 select_all_var_lags）——
-#                    检验"基线无偿继承 CCM 滞后识别"会不会抬高基线、压低 RQ3
-#   xcorr_d0         基线互相关放宽到 0..12——检验禁止 d=0 对基线是否关键
-#   drop_d0          因果最优 d=0 的边整条丢弃，不在预测域重新求最优——
-#                    检验"不丢弃"这个决定带来的差别
-#
-# 跑法： modal run code/04_forecast/modal_forecast_synchrony_filtered.py --variant drop_d0
-# 输出： results/sensitivity/<variant>/ 下同名四个文件，主结果不受影响。
-VARIANTS = ("main", "baseline_ccmlag", "xcorr_d0", "drop_d0")
 
 
-def _apply_dm_fdr(pd, dm_df):
+def _apply_dm_fdr(dm_df):
     """对全部 Diebold–Mariano 检验施加 Benjamini–Hochberg FDR 校正。
 
     检验族的划定
@@ -767,17 +729,11 @@ def _apply_dm_fdr(pd, dm_df):
 
 
 @app.local_entrypoint()
-def main(variant: str = "main"):
+def main():
     import pandas as pd
 
-    if variant not in VARIANTS:
-        raise SystemExit(f"未知 variant={variant!r}，可选：{', '.join(VARIANTS)}")
     started = time.time()
-    # 对照变体写到独立子目录，绝不覆盖主结果。
-    out_dir_local = (LOCAL_OUT_DIR if variant == "main"
-                     else os.path.join(LOCAL_OUT_DIR, "sensitivity", variant))
-    out_dir_remote = OUT_DIR if variant == "main" else f"{OUT_DIR}/sensitivity/{variant}"
-    print(f"变体：{variant}｜本地输出 {out_dir_local}", flush=True)
+    out_dir_local, out_dir_remote = LOCAL_OUT_DIR, OUT_DIR
     # 必须读合并步骤写出的正规文件名：run_within_lake_ccm.py / run_inter_lake_ccm.py
     # 的 merge 阶段写的就是这两个名字。曾一度读手工下载的 *_v3 副本，导致重跑 CCM
     # 后合并写的是正规文件、而预测仍读旧副本，会静默地用过期因果网络跑新预测。
@@ -807,7 +763,6 @@ def main(variant: str = "main"):
             [xgb_params] * len(lakes),
             [within_edges.to_dict("records")] * len(lakes),
             [inter_edges.to_dict("records")] * len(lakes),
-            [variant] * len(lakes),
             return_exceptions=True,
         )
     )
@@ -828,7 +783,7 @@ def main(variant: str = "main"):
             print(f"  {lake}: {err}", flush=True)
         print("修复后可单独补跑这些湖泊。", flush=True)
 
-    dm_df = _apply_dm_fdr(pd, pd.DataFrame(dm_rows))
+    dm_df = _apply_dm_fdr(pd.DataFrame(dm_rows))
     outputs = {
         "full": pd.DataFrame(full_rows),
         "rolling": pd.DataFrame(rolling_rows),
@@ -877,8 +832,6 @@ def main(variant: str = "main"):
 # 跑法
 # ----
 #     modal run --detach code/04_forecast/modal_forecast_synchrony_filtered.py::detached
-#     modal run --detach code/04_forecast/modal_forecast_synchrony_filtered.py::detached \
-#         --variants main
 #
 # 取回结果（跑完后在本机执行）
 # ----------------------------
@@ -906,7 +859,7 @@ def _jsonable(obj):
 
 @app.function(image=image, volumes={DATA_ROOT: volume},
               timeout=10 * 3600, cpu=1.0, memory=4096, retries=2)
-def orchestrate(variants: str = "main") -> dict:
+def orchestrate() -> dict:
     import pandas as pd
 
     p = _configure_module()
@@ -920,71 +873,63 @@ def orchestrate(variants: str = "main") -> dict:
     xgb_params = p.tune_xgboost_hyperparams(FORECAST_LAKES)
     print(f"Selected XGBoost parameters: {xgb_params}", flush=True)
 
-    summary = {}
-    for variant in [v.strip() for v in variants.split(",") if v.strip()]:
-        if variant not in VARIANTS:
-            print(f"[SKIP] 未知 variant={variant!r}", flush=True)
-            continue
-        out_dir_remote = OUT_DIR if variant == "main" else f"{OUT_DIR}/sensitivity/{variant}"
-        shard_dir = f"{OUT_DIR}/forecast_shards/{variant}"
-        os.makedirs(shard_dir, exist_ok=True)
-        os.makedirs(out_dir_remote, exist_ok=True)
+    out_dir_remote = OUT_DIR
+    shard_dir = f"{OUT_DIR}/forecast_shards"
+    os.makedirs(shard_dir, exist_ok=True)
+    os.makedirs(out_dir_remote, exist_ok=True)
 
-        done = {n[:-5] for n in os.listdir(shard_dir) if n.endswith(".json")}
-        todo = [lk for lk in FORECAST_LAKES if lk not in done]
-        print(f"\n=== variant={variant}｜已完成 {len(done)}｜待跑 {len(todo)} ===", flush=True)
+    done = {n[:-5] for n in os.listdir(shard_dir) if n.endswith(".json")}
+    todo = [lk for lk in FORECAST_LAKES if lk not in done]
+    print(f"\n=== 已完成 {len(done)}｜待跑 {len(todo)} ===", flush=True)
 
-        if todo:
-            results = list(run_lake_synchrony_filtered.map(
-                todo,
-                [xgb_params] * len(todo),
-                [within_edges.to_dict("records")] * len(todo),
-                [inter_edges.to_dict("records")] * len(todo),
-                [variant] * len(todo),
-                return_exceptions=True,
-            ))
-            for lake, result in zip(todo, results):
-                if isinstance(result, Exception):
-                    print(f"  [FAIL] {lake}: {type(result).__name__}: {result}", flush=True)
-                    continue
-                with open(f"{shard_dir}/{lake}.json", "w", encoding="utf-8") as fh:
-                    json.dump(result, fh, ensure_ascii=False, default=_jsonable)
-                volume.commit()          # 立刻落盘：被抢占只损失在途的湖
-                print(f"  [OK] {lake}", flush=True)
+    if todo:
+        results = list(run_lake_synchrony_filtered.map(
+            todo,
+            [xgb_params] * len(todo),
+            [within_edges.to_dict("records")] * len(todo),
+            [inter_edges.to_dict("records")] * len(todo),
+            return_exceptions=True,
+        ))
+        for lake, result in zip(todo, results):
+            if isinstance(result, Exception):
+                print(f"  [FAIL] {lake}: {type(result).__name__}: {result}", flush=True)
+                continue
+            with open(f"{shard_dir}/{lake}.json", "w", encoding="utf-8") as fh:
+                json.dump(result, fh, ensure_ascii=False, default=_jsonable)
+            volume.commit()          # 立刻落盘：被抢占只损失在途的湖
+            print(f"  [OK] {lake}", flush=True)
 
-        rows = {"full_rows": [], "rolling_rows": [], "dm_rows": [], "selected_rows": []}
-        present = sorted(n for n in os.listdir(shard_dir) if n.endswith(".json"))
-        for name in present:
-            with open(f"{shard_dir}/{name}", encoding="utf-8") as fh:
-                shard = json.load(fh)
-            for key in rows:
-                rows[key].extend(shard.get(key, []))
+    rows = {"full_rows": [], "rolling_rows": [], "dm_rows": [], "selected_rows": []}
+    present = sorted(n for n in os.listdir(shard_dir) if n.endswith(".json"))
+    for name in present:
+        with open(f"{shard_dir}/{name}", encoding="utf-8") as fh:
+            shard = json.load(fh)
+        for key in rows:
+            rows[key].extend(shard.get(key, []))
 
-        dm_df = _apply_dm_fdr(pd, pd.DataFrame(rows["dm_rows"]))
-        outputs = {
-            "full": pd.DataFrame(rows["full_rows"]),
-            "rolling": pd.DataFrame(rows["rolling_rows"]),
-            "dm": dm_df,
-            "selected": pd.DataFrame(rows["selected_rows"]),
-        }
-        for key, frame in outputs.items():
-            path = f"{out_dir_remote}/{OUTPUT_NAMES[key]}"
-            frame.to_csv(path, index=False)
-            print(f"  wrote {path} ({len(frame)} rows)", flush=True)
-        volume.commit()
+    outputs = {
+        "full": pd.DataFrame(rows["full_rows"]),
+        "rolling": pd.DataFrame(rows["rolling_rows"]),
+        "dm": _apply_dm_fdr(pd.DataFrame(rows["dm_rows"])),
+        "selected": pd.DataFrame(rows["selected_rows"]),
+    }
+    for key, frame in outputs.items():
+        path = f"{out_dir_remote}/{OUTPUT_NAMES[key]}"
+        frame.to_csv(path, index=False)
+        print(f"  wrote {path} ({len(frame)} rows)", flush=True)
+    volume.commit()
 
-        summary[variant] = {"lakes_done": len(present),
-                            **{k: len(v) for k, v in outputs.items()}}
-        print(f"=== variant={variant} 完成：{summary[variant]} ===", flush=True)
-
+    summary = {"lakes_done": len(present),
+               **{k: len(v) for k, v in outputs.items()}}
+    print(f"=== 完成：{summary} ===", flush=True)
     return summary
 
 
 @app.local_entrypoint()
-def detached(variants: str = "main,baseline_ccmlag,xcorr_d0,drop_d0"):
+def detached():
     """spawn 服务端编排后立即返回。配合 `modal run --detach` 使用。"""
-    call = orchestrate.spawn(variants)
-    print(f"已提交服务端编排，variants={variants}")
+    call = orchestrate.spawn()
+    print("已提交服务端编排")
     print(f"call id: {call.object_id}")
     print("本机现在可以关机。查看进度：modal app logs（或 Modal 网页控制台）")
     print("跑完取回结果：")

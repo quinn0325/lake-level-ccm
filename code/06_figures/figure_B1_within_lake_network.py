@@ -40,9 +40,6 @@ LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
 LABEL["Lake_of_the_Woods"] = "LotW"        # 列首空间有限，用简称
 
 VARS = ["RegFlow", "R", "P", "Evap", "SWE", "T", "WL"]
-SHORT = {"RegFlow": "RegF", "R": "R", "P": "P", "Evap": "Evap",
-         "SWE": "SWE", "T": "T", "WL": "WL"}
-
 CMAP = LinearSegmentedColormap.from_list(
     "rho", ["#F4F8FB", "#C5DFED", "#84BBD8", "#347EAF", "#124B7A"])
 NORM = Normalize(vmin=0.0, vmax=1.0)

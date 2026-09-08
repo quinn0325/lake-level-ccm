@@ -26,7 +26,9 @@ hard-codes the correct order.
 
 ## A known wart
 
-`config.py` is meant to be the single source of truth, but only the
-`00_data_generation/` scripts actually read it. The others keep their own copies
-of the lake list and variable list. They agree, and `verify.py` would catch it
-if they stopped agreeing, but it is duplication that should have been cleaned up.
+`config.py` was meant to be the single source of truth, but only the
+`00_data_generation/` scripts import it. The analysis and figure scripts keep
+their own copies of the lake list and the lag ranges. They agree, and
+`verify.py` would catch it if they stopped agreeing, but it is duplication that
+should have been cleaned up. Settings that nothing outside `config.py` read have
+been removed from it rather than left there looking authoritative.

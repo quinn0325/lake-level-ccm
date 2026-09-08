@@ -62,7 +62,6 @@ TXT_FLIP = 0.62                          # 超过此 ρ 用白字
 # 置入，一旦被缩放，下面所有字号都会等比变小。
 FS_TICK, FS_LAB, FS_TITLE, FS_IN, FS_LEG = 10.0, 11.0, 12.0, 9.5, 10.0
 FS_HEAD = 10.0                  # 列首：旋转 30° 以便在等分列宽下保持字号
-FS_SYS = 9.0                    # 左侧水系竖标
 LEFT, RIGHT = 0.292, 0.900
 
 mpl.rcParams.update({

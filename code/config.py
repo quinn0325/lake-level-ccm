@@ -1,9 +1,10 @@
-"""Configuration for the whole pipeline.
+"""Shared configuration for the data-generation stage.
 
-Which lakes, which lags, which results file: all of it lives here so that no
-script has to hard-code its own copy. The point was to stop the figures and the
-forecasts silently drifting onto different branches of the results, which had
-already happened once.
+Caveat: only the 00_data_generation/ scripts import this file. The analysis and
+figure scripts carry their own copies of the lake list and the lag ranges. They
+agree, and verify.py would catch it if they stopped agreeing, but this is not
+the single source of truth it was meant to be. Values that nothing outside this
+file read have been removed rather than left here looking authoritative.
 """
 
 from pathlib import Path
@@ -52,31 +53,14 @@ ROLLING_HORIZONS = [1, 3, 6, 12]
 EMBED_TAU = 1
 EMBED_E_CANDIDATES = range(2, 11)   # E ∈ [2, 10]
 
-# ----------------------------------------------------------------- lags
-# One signed scan over -12..+12 per edge, same for within-lake and between-lake.
-# The observed series and every IAAFT surrogate go through the identical lag
-# family; ccm_full_pipeline.CCM_LAGS is the only place the default is defined.
-CAUSAL_LAGS = range(-12, 13)
-
-# Forecast features must lag by at least one month: d=0 would need the driver's
-# value at the forecast origin itself, which is not information you have.
-# Causal identification and feature construction are two separate optimisation
-# problems, each solved on its own lag domain.
-FORECAST_LAGS = range(1, 13)
-
 # --------------------------------------------------------------- inference
 N_SURROGATES = 500
-IAAFT_N_ITER = 100
 FDR_ALPHA = 0.05
 
 # ------------------------------------------------------------ missing data
 MAX_FILLABLE_GAP_MONTHS = 6    # longer gap => drop the variable, don't interpolate
 OUTLIER_Z_THRESH = 6
 OUTLIER_LEVEL_Z_THRESH = 5
-
-# -------------------------------------------------------------- results file
-# Figures and forecasts take the filename from here, never hard-coded.
-EMBED_PARAMS_FILE = RESULTS_DIR / "embed_params_corrected.json"
 
 # Caveat: only the 00_data_generation/ scripts actually import this file. The
 # rest still carry their own copies of the lake and variable lists. They agree,

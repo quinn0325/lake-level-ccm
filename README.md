@@ -156,7 +156,7 @@ lake-level-ccm/
 ├── run_local.py                  local driver for every analysis stage
 │
 ├── code/
-│   ├── config.py                 single source of truth: lakes, lags, α, split
+│   ├── config.py                 shared settings for the acquisition stage
 │   ├── 00_data_generation/       acquisition and monthly-series construction
 │   │   ├── modal_lake_screening.py     candidate-lake screening
 │   │   ├── ccm_modal_app.py            HYDAT + ERA5-Land download, panel build

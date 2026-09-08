@@ -15,7 +15,7 @@ Stages
     embed     embedding dimensions    -> results/embed_params_corrected.json
     within    420 within-lake edges   -> results/ccm_all_edges_merged_fdr.csv
     inter     90 between-lake edges   -> results/connectivity_full_pairwise_ccm_results.csv
-    forecast  the 13 method variants  -> results/forecast_*_results.csv
+    forecast  the 13 methods          -> results/forecast_*_results.csv
     figures   every figure and table  -> results/figures/, ch4_tables/, appendices/
     all       the above, in order
 
@@ -176,7 +176,7 @@ def stage_inter(workers, n_surrogates):
 
 
 # ---------------------------------------------------------------- forecast
-def stage_forecast(variant="main"):
+def stage_forecast():
     """The forecasting stage, run locally.
 
     `main()` in modal_forecast_synchrony_filtered.py is a local_entrypoint that
@@ -204,13 +204,11 @@ def stage_forecast(variant="main"):
     F.INTER_ORIGINAL_INPUT = str(
         RESULTS / "connectivity_full_pairwise_ccm_results.csv")
 
-    out_dir = RESULTS if variant == "main" else RESULTS / "sensitivity" / variant
     within = F._filtered_within_edges(
         pd, str(RESULTS / "ccm_all_edges_merged_fdr.csv"))
     inter = F._filtered_interlake_edges(
         pd, str(RESULTS / "connectivity_full_pairwise_ccm_results.csv"))
-    _log(f"variant {variant}: {len(within)} within-lake edges, "
-         f"{len(inter)} between-lake edges")
+    _log(f"{len(within)} within-lake edges, {len(inter)} between-lake edges")
 
     _log("tuning XGBoost hyperparameters once, globally")
     xgb_params = F.tune_hyperparams.local()
@@ -223,7 +221,7 @@ def stage_forecast(variant="main"):
     for lake in config.LAKES:
         _log(f"  {lake}")
         try:                                   # one lake failing must not void the other nine
-            res = F.run_lake_synchrony_filtered.local(lake, xgb_params, wr, ir, variant)
+            res = F.run_lake_synchrony_filtered.local(lake, xgb_params, wr, ir)
         except Exception as exc:
             failed.append((lake, f"{type(exc).__name__}: {exc}"))
             continue
@@ -236,9 +234,8 @@ def stage_forecast(variant="main"):
                "rolling": pd.DataFrame(rows["rolling_rows"]),
                "dm": F._apply_dm_fdr(pd, pd.DataFrame(rows["dm_rows"])),
                "selected": pd.DataFrame(rows["selected_rows"])}
-    out_dir.mkdir(parents=True, exist_ok=True)
     for key, frame in outputs.items():
-        path = out_dir / F.OUTPUT_NAMES[key]
+        path = RESULTS / F.OUTPUT_NAMES[key]
         frame.to_csv(path, index=False)
         _log(f"wrote {path} ({len(frame)} rows)")
 

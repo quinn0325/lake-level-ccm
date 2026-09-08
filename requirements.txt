@@ -14,9 +14,14 @@ numpy==1.26.4
 scipy
 statsmodels
 pmdarima
-xgboost
 networkx
 matplotlib
+
+# xgboost 在原始运行中未锁版本，事后也无法从日志里查出当时的版本。
+# 不同大版本对外生列缺失值的处理不同，会让带外生变量的 XGBoost
+# RMSE 在第三位小数上变化（见 README「Reproduction tolerance」）。
+# 如需跨机器逐位一致，请自行锁定一个版本。
+xgboost
 
 # tigramite 仅 PCMCI 分析需要；PCMCI 未纳入正文，如不复现该部分可省略。
 tigramite

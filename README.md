@@ -93,8 +93,29 @@ required** — `run_local.py` reimplements every stage with local multiprocessin
 `geopandas` is needed only to redraw Figure 3.1 (the study-area map) and to run
 the acquisition stage.
 
-Randomness is controlled: surrogate generation and XGBoost both use fixed seeds,
-so a rerun on the same data reproduces the reported numbers exactly.
+### Reproduction tolerance
+
+Surrogate generation uses fixed seeds, so the CCM stages are deterministic and
+reproduce exactly. The forecasting stage does not reproduce to the last decimal
+on a different platform. Rerunning Kalamalka at a one-month horizon on macOS /
+arm64 with `xgboost` 3.4.1, against the published results produced on Modal's
+Linux containers, gives:
+
+| Method family | Largest absolute RMSE difference |
+| --- | --- |
+| Persistence | 0 (exact) |
+| SARIMA, SARIMAX (all five variable sets) | 1.0 x 10^-5 |
+| XGBoost, autoregressive features only | 6.7 x 10^-5 |
+| XGBoost with exogenous predictors | 7.8 x 10^-3 |
+
+The first three rows are optimiser and floating-point noise. The last row is
+larger because `xgboost` was not version-pinned in the original run and its
+handling of missing values in exogenous columns has changed across major
+versions; no record of the version used survives, so it cannot be pinned here
+retrospectively. A difference of this size can reorder two closely spaced
+XGBoost variants within a single lake and horizon, so treat the per-cell
+forecasting numbers as reproducible to about three decimal places rather than
+exactly. Pin `xgboost` yourself if you need bitwise agreement across machines.
 
 ---
 

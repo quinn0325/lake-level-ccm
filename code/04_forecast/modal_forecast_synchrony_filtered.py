@@ -194,10 +194,8 @@ def _select_stepwise_lags(panel_train, all_var_lags, wl_col="WL", criterion="aic
 def _filtered_within_edges(pd, input_path=WITHIN_ORIGINAL_INPUT):
     """取湖内因果网络中的边。
 
-    统一带符号扫描（CCM_LAGS = -12..+12）实施后，主结果里的 obs_lag 本身就是
-    全局最优滞后，causal_evidence 也已内含时序保留规则（d>=0），因此不再需要
-    读取单独的 signed-lag 诊断表——旧流程中 obs_lag 与 signed_best_lag 并存、
-    两者可能给出不同最优滞后的问题也随之消失。
+    带符号扫描（CCM_LAGS = -12..+12）下，obs_lag 本身就是全局最优滞后，
+    causal_evidence 也已内含时序保留规则（d >= 0），无需再读单独的诊断表。
     """
     df = pd.read_csv(input_path)
     sig = df[df["causal_evidence"].map(_as_bool)].copy()
@@ -608,10 +606,9 @@ def run_lake_synchrony_filtered(
             })
             print(f"[{lake_name}] {name} failed: {type(exc).__name__}: {exc}", flush=True)
 
-    # 原列表只含 CCM 策略之间的比较，因为本脚本此前不产出基线。
-    # 现已补入基线方法，相应补上 ccm_full_pipeline.DM_PAIRS_TEMPLATE 中
-    # 与基线的对比——RQ3 关心的正是"因果筛选相对无外生/不筛选基线是否更好"。
-    # 缺失的方法对会在下方 continue 跳过，不会因某湖无某方法而报错。
+    # 14 对预先设定的比较：CCM 策略彼此之间，以及各自对无外生/不筛选基线——
+    # RQ3 问的正是"因果筛选相对基线是否更准"。某个湖缺某个方法时下方 continue
+    # 跳过该对，不报错。
     comparisons = [
         # CCM 策略之间（逐步扩大所用的因果信息）
         ("XGBoost_CCM_ancestors", "XGBoost_CCM_direct"),

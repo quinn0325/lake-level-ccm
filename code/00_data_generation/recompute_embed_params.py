@@ -4,7 +4,7 @@
 ----------------
 `lake_pkls/*.pkl` 里缓存的 `embed_params` 由数据生成阶段算出，当时
 `build_variable_panel()` 未传 `forecast_horizon`，去季节化用了含测试期的全序列
-气候态，因此 τ 与 E 携带测试期信息（已确认的泄漏，见 docs/排查问题清单.md B-1）。
+气候态，因此 τ 与 E 携带了测试期信息。
 
 下游两个面板构建函数（`load_lake_panel_for_ccm`、`load_pair_panel_for_connectivity`）
 本身早已修复为只用训练期去季节化，**唯一残留的泄漏点**就是它们仍从 PKL 读取

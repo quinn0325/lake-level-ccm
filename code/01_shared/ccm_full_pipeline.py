@@ -96,12 +96,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 START_YEAR, END_YEAR = 1994, 2024
 WSC_BASE_URL = "https://wateroffice.ec.gc.ca/services/monthly_data/csv/inline"
 
-# 路径默认值取包内相对位置，不再硬编码到某台机器上的绝对路径。
-# 说明：Modal 编排器会在运行时覆盖这几个变量（见 modal_full_pipeline.py::_prepare
-# 里的 p.PKL_DIR = ... / p.OUT_DIR = ...），因此本处默认值主要服务于本地运行。
-# 旧默认值中的 CONNECTIVITY_CSV 指向的是**旧的 14 条边**结果，与当前 90 条边分支
-# 不一致，是已确认的问题（见 docs/排查问题清单.md C-2），此处一并纠正。
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # → submission_v3/
+# 路径默认值取包内相对位置，不硬编码到某台机器上。Modal 上运行时这几个变量会被
+# 容器路径覆盖（见 04_forecast 里的 _configure_module），所以默认值主要服务本地运行。
+_PKG_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 仓库根
 _DEFAULT_RESULTS = os.path.join(_PKG_DIR, "results")
 
 PKL_DIR = os.environ.get("CCM_PKL_DIR", os.path.join(_PKG_DIR, "lake_pkls"))
@@ -1157,7 +1154,7 @@ def fit_xgboost_multi(wl_series, exog_df, exog_lags, xgb_params, test_size=12, w
 # 10. 滚动起点(rolling-origin)评估
 # ============================================================
 
-def rolling_origin_xgb(fit_result, horizons=ROLLING_HORIZONS, test_size=FORECAST_HORIZON):
+def rolling_origin_xgb(fit_result, horizons=ROLLING_HORIZONS):
     """XGBoost已经是递归实现，逐起点滚动几乎不加成本。每个起点t0独立mini-walk，
     互不共享predicted history。"""
     model = fit_result["model"]
@@ -1228,7 +1225,7 @@ def rolling_origin_xgb(fit_result, horizons=ROLLING_HORIZONS, test_size=FORECAST
     return out
 
 
-def rolling_origin_sarimax(fit_result, wl_series, test_size=FORECAST_HORIZON, horizons=ROLLING_HORIZONS, m=12):
+def rolling_origin_sarimax(fit_result, wl_series, test_size=FORECAST_HORIZON, horizons=ROLLING_HORIZONS):
     """SARIMAX/SARIMA滚动起点评估：用pmdarima的update()方法做轻量状态更新，不是
     每个起点都重新完整网格搜索定阶——这是计算成本约束下的工程简化，不是教科书
     验证过的、跟完整滚动重新拟合统计上等价的方法，写方法部分要如实说明。"""
@@ -1436,7 +1433,7 @@ def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix="", drop_d
     return lags
 
 
-def select_all_var_lags(ccm_train_panel, embed_params, log_prefix=""):
+def select_all_var_lags(ccm_train_panel, embed_params):
     lags = {}
     for var in embed_params:
         if var == "WL":

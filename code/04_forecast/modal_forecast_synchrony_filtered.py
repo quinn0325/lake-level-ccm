@@ -399,8 +399,7 @@ def run_lake_synchrony_filtered(
     # 与 CCM 保持相同的预处理、相同的 0–12 搜索窗口、相同的 conditional-information
     # 假设（两侧均不施加 d ≥ h 约束）。旧函数 select_all_var_lags 保留以便回退对照。
     if variant == "baseline_ccmlag":       # 对照变体：基线沿用 CCM 的 lag_scan
-        all_var_lags = p.select_all_var_lags(
-            ccm_train_panel, embed_params, log_prefix=f"[{lake_name}] ")
+        all_var_lags = p.select_all_var_lags(ccm_train_panel, embed_params)
     else:
         all_var_lags = p.select_all_var_lags_xcorr(
             ccm_train_panel,
@@ -490,10 +489,8 @@ def run_lake_synchrony_filtered(
     method_exog_lags = {}
 
     # ---- 基线方法 ----
-    # 本脚本原先只产出 CCM_* 与 Stepwise，基线来自另一次运行
-    # (modal_full_pipeline 阶段4)。那会导致胜负比较跨两批数据、两套配置——
-    # 正是本轮返工要消除的问题。此处按 ccm_full_pipeline.py:1819-1858 的写法
-    # 原样补入，使全部方法共用同一份面板、同一套 XGB 超参、同一批 CCM 结果。
+    # 基线必须和 CCM_* 在同一次运行里产出，否则胜负比较会跨两批数据、两套配置。
+    # 全部方法共用同一份面板、同一套 XGB 超参、同一批 CCM 结果。
     # 无外生变量的三个基线不受"完美预知"影响，method_exog_lags 记为 None。
     methods["SARIMA"] = lambda: p.fit_auto_sarima(wl_series, test_size=p.FORECAST_HORIZON)
     method_exog_lags["SARIMA"] = None

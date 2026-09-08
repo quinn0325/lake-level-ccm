@@ -291,9 +291,9 @@ def find_stations_on_natural_lakes(poly_shp_path, stations, h_range):
     tiny = {sn: v for sn, v in on_lake.items() if v[3] < SMALL_AREA_WARN_KM2}
     if tiny:
         print(f"\n[warn] {len(tiny)} station(s) resolved to a suspiciously small (< {SMALL_AREA_WARN_KM2} km^2) "
-              f"polygon -- this is the same signature as the Lake_Huron cross-border blind spot documented in "
-              f"ccm_lib.py (real polygon tagged under a non-Canada Country value, Canada-only filter falls back "
-              f"to an incidental nearby fragment). Check whether these are genuine tiny lakes or border cases; "
+              f"polygon -- the signature of a cross-border lake: HydroLAKES tags the real polygon under "
+              f"the other country, the Canada-only filter drops it, and resolution falls back to an incidental "
+              f"nearby fragment. Check whether these are genuine tiny lakes or border cases; "
               f"if the latter, add the station number to NO_COUNTRY_FILTER_STATIONS and rerun:")
         for sn, v in tiny.items():
             s = stations[sn]

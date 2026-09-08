@@ -71,7 +71,7 @@ def check_environment():
         except Exception as exc:
             record(f"{mod} importable", FAIL, str(exc))
 
-    for name in ("lake_pkls", "results", "ch4_tables", "appendices", "dataset"):
+    for name in ("lake_pkls", "results", "appendices", "dataset"):
         d = ROOT / name
         n = len(list(d.glob("*"))) if d.is_dir() else 0
         record(f"{name}/ present", PASS if n else FAIL, f"{n} files")
@@ -143,9 +143,13 @@ def check_derivations():
                 broke = True
                 break
         if not broke:
-            record("the five Chapter 4 table scripts run", PASS)
-            compare_dir("ch4_tables/ reproduced from results/",
-                        work / "ch4_tables", ROOT / "ch4_tables")
+            # ch4_tables/ is intermediate and not committed, so there is nothing
+            # to diff it against; check the expected set was produced instead.
+            made = sorted(p.name for p in (work / "ch4_tables").glob("*.csv"))
+            record("ch4_tables/ derived from results/",
+                   PASS if len(made) == 10 else FAIL,
+                   f"{len(made)} tables" if len(made) == 10
+                   else f"expected 10, got {made}")
 
             ok, tail = run_script("07_tables/build_appendices.py", work / "code",
                                   cwd=work, env=env)

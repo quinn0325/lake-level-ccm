@@ -177,7 +177,6 @@ lake-level-ccm/
 ├── lake_pkls/                    preprocessed per-lake panels (analysis entry point)
 ├── dataset/                      the public dataset (see §6)
 ├── results/                      key numerical outputs
-├── ch4_tables/                   intermediate tables the figures and appendices read
 ├── figures/                      final figures, plus the clipped map layers
 └── appendices/                   the appendix tables as CSV
 ```
@@ -239,9 +238,9 @@ forecasting stage takes roughly one hour; figures and tables take under a minute
 6. **Run the forecasting analysis** —
    `code/04_forecast/modal_forecast_synchrony_filtered.py`.
 7. **Generate tables and figures** — `run_local.py --stage figures`. This runs
-   `code/07_tables/build_ch4_tables.py` first, which derives the six intermediate
-   tables in `ch4_tables/` that every figure and appendix script reads, then runs
-   every figure script and every table script in turn.
+   `code/07_tables/build_ch4_tables.py` first. That writes `ch4_tables/`, an
+   intermediate layer every figure and appendix script reads; it takes under a
+   second and is not committed, so run it before any figure script on its own.
 
    Rerunning writes figures to `results/figures/` (including the large TIFF
    versions, which are not committed). The copies in `figures/` are the ones used

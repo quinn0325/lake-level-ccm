@@ -15,3 +15,7 @@ results/figures/
 appendices/*.md
 appendices/en/
 appendices/全部附录.xlsx
+
+# Intermediate tables between results/ and the figure scripts. Regenerated in
+# under a second by code/07_tables/build_ch4_tables.py and never reported.
+ch4_tables/

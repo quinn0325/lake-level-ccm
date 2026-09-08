@@ -1,0 +1,14 @@
+method,method_key,n_lakes_fitted,rmse_h1,n_h1,rmse_h3,n_h3,rmse_h6,n_h6,rmse_h12,n_h12
+Persistence,Persistence,10,0.167,10,0.376,10,0.553,10,0.566,10
+SARIMA (no exogenous),SARIMA,10,0.161,10,0.333,10,0.449,10,0.383,10
+SARIMAX + all vars,SARIMAX_all_vars,10,0.061,4,0.092,4,0.105,4,0.11,4
+SARIMAX + stepwise,SARIMAX_Stepwise,10,0.062,4,0.093,4,0.107,4,0.11,4
+SARIMAX + CCM direct,SARIMAX_CCM_direct,9,0.07,4,0.13,4,0.168,4,0.161,4
+SARIMAX + CCM ancestors,SARIMAX_CCM_ancestors,9,0.07,4,0.128,4,0.164,4,0.159,4
+SARIMAX + CCM neighbour,SARIMAX_CCM_neighbor,8,0.082,1,0.11,1,0.117,1,0.093,1
+"XGBoost, AR-only",XGBoost_AR_only,10,0.18,10,0.334,10,0.446,10,0.304,10
+XGBoost + all vars,XGBoost_all_vars,10,0.182,10,0.282,10,0.326,10,0.236,10
+XGBoost + stepwise,XGBoost_Stepwise,10,0.179,10,0.269,10,0.309,10,0.196,10
+XGBoost + CCM direct,XGBoost_CCM_direct,9,0.192,9,0.31,9,0.365,9,0.248,9
+XGBoost + CCM ancestors,XGBoost_CCM_ancestors,9,0.19,9,0.303,9,0.359,9,0.26,9
+XGBoost + CCM neighbour,XGBoost_CCM_neighbor,8,0.222,8,0.332,8,0.381,8,0.324,5

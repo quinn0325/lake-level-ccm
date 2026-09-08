@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-TAB_DIR = Path(__file__).resolve().parents[2].parent / "ch4_tables"
+TAB_DIR = Path(__file__).resolve().parents[2] / "ch4_tables"
 HORIZONS = [1, 3, 6, 12]
 
 BLOCKS = [

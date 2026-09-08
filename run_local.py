@@ -192,6 +192,11 @@ def stage_forecast(variant="main"):
         p.EMBED_PARAMS_PATH = str(RESULTS / "embed_params_corrected.json")
         return p
     F._configure_module = _configure_local
+    # _original_within_direct_lags / _original_neighbor_lags 在函数体内直接读这
+    # 两个模块级常量（容器路径），不走参数，因此必须一并改掉。
+    F.WITHIN_ORIGINAL_INPUT = str(RESULTS / "ccm_all_edges_merged_fdr.csv")
+    F.INTER_ORIGINAL_INPUT = str(
+        RESULTS / "connectivity_full_pairwise_ccm_results.csv")
 
     out_dir = RESULTS if variant == "main" else RESULTS / "sensitivity" / variant
     within = F._filtered_within_edges(
@@ -234,8 +239,10 @@ def stage_forecast(variant="main"):
 # ---------------------------------------------------------------- figures
 def stage_figures():
     import runpy
-    scripts = sorted((CODE / "06_figures").glob("figure_*.py")) + \
-              sorted((CODE / "07_tables").glob("*.py"))
+    # 顺序有依赖：图与附录读的都是 ch4_tables/ 里的中间表，必须先生成。
+    ch4 = CODE / "07_tables" / "build_ch4_tables.py"
+    scripts = [ch4] + sorted((CODE / "06_figures").glob("figure_*.py")) + \
+              [f for f in sorted((CODE / "07_tables").glob("*.py")) if f != ch4]
     for script in scripts:
         _log(f"运行 {script.name}")
         try:

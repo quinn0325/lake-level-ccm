@@ -33,7 +33,7 @@ sys.path.insert(0, str(CODE / "01_shared"))
 import ccm_full_pipeline as p                                    # noqa: E402
 
 p.log = lambda msg: None
-OUT = CODE.parent.parent / "dataset"
+OUT = CODE.parent / "dataset"
 PKL = Path(p.PKL_DIR)
 
 SYSTEMS = [("Okanagan", ["Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake",

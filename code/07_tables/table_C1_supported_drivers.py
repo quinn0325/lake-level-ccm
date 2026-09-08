@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-TAB_DIR = Path(__file__).resolve().parents[2].parent / "ch4_tables"
+TAB_DIR = Path(__file__).resolve().parents[2] / "ch4_tables"
 
 SYSTEMS = [
     ("Okanagan", ["Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake"]),

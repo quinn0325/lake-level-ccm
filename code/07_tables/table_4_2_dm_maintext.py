@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-TAB = Path(__file__).resolve().parents[2].parent / "ch4_tables"
+TAB = Path(__file__).resolve().parents[2] / "ch4_tables"
 
 PAIRS = [("XGBoost", "XGBoost_CCM_direct", "XGBoost_AR_only"),
          ("XGBoost", "XGBoost_CCM_ancestors", "XGBoost_AR_only"),

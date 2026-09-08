@@ -30,9 +30,9 @@ import ccm_full_pipeline as p                                   # noqa: E402
 
 p.log = lambda msg: None
 
-ROOT = CODE.parent                       # submission_final
-TAB = ROOT.parent / "ch4_tables"
-OUT = ROOT.parent / "appendices"
+ROOT = CODE.parent                       # 仓库根
+TAB = ROOT / "ch4_tables"
+OUT = ROOT / "appendices"
 PKL = Path(p.PKL_DIR)
 
 SYSTEMS = [

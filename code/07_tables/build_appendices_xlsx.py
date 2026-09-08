@@ -19,7 +19,7 @@ import pandas as pd
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-OUT = Path(__file__).resolve().parents[2].parent / "appendices"
+OUT = Path(__file__).resolve().parents[2] / "appendices"
 XLSX = OUT / "全部附录.xlsx"
 
 SECTIONS = [

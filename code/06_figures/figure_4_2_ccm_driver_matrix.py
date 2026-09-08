@@ -34,7 +34,7 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Rectangle
 
 ROOT = Path(__file__).resolve().parents[2]
-TAB_DIR = ROOT.parent / "ch4_tables"
+TAB_DIR = ROOT / "ch4_tables"
 OUT_DIR = ROOT / "results" / "figures"
 
 SYSTEMS = [

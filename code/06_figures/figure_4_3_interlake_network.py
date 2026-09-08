@@ -38,7 +38,7 @@ import matplotlib.patheffects as pe
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 ROOT = Path(__file__).resolve().parents[2]
-TAB_DIR = ROOT.parent / "ch4_tables"
+TAB_DIR = ROOT / "ch4_tables"
 OUT_DIR = ROOT / "results" / "figures"
 
 LABEL = {"Kalamalka_Lake": "Kalamalka", "Okanagan_Lake": "Okanagan",

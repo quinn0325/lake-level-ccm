@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-TAB_DIR = ROOT.parent / "ch4_tables"
+TAB_DIR = ROOT / "ch4_tables"
 OUT_DIR = ROOT / "results" / "figures"
 
 HORIZONS = [1, 3, 6, 12]

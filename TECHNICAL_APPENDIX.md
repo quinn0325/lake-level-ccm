@@ -25,6 +25,7 @@ but not reported.
 | `code/05_diagnostics/` | Outlier screen, structural-break scan, coverage checks |
 | `code/06_figures/`, `code/07_tables/` | One script per figure and per table in the dissertation |
 | `code/08_dataset/` | Builds the published dataset from the preprocessed panels |
+| `ch4_tables/` | Six intermediate tables derived from `results/` by `build_ch4_tables.py`; every figure and appendix script reads these rather than `results/` directly |
 | `lake_pkls/` | Preprocessed per-lake panels — the entry point if you skip acquisition |
 | `dataset/` | The published monthly dataset (three layers plus a data dictionary) |
 | `results/` | Key numerical outputs, for checking a rerun against ours |
@@ -94,7 +95,7 @@ inputs reproduces the reported numbers exactly.
 | 4. Within-lake CCM | `python run_local.py --stage within --workers 8` | `results/ccm_all_edges_merged_fdr.csv` |
 | 5. Between-lake CCM | `python run_local.py --stage inter --workers 8` | `results/connectivity_full_pairwise_ccm_results.csv` |
 | 6. Forecasting | `python run_local.py --stage forecast` | `results/forecast_synchrony_filtered_*.csv` |
-| 7. Figures and tables | `python run_local.py --stage figures` | `results/figures/`, `appendices/` |
+| 7. Figures and tables | `python run_local.py --stage figures` | `ch4_tables/`, `results/figures/`, `appendices/` |
 
 Steps 3–7 also run as one command:
 

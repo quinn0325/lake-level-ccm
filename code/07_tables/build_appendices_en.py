@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-OUT = Path(__file__).resolve().parents[2].parent / "appendices"
+OUT = Path(__file__).resolve().parents[2] / "appendices"
 EN = OUT / "en"
 
 COL_DECIMALS = {"coverage_pct": 1, "p_value": 4, "p_fdr": 4, "kendall_p": 4,

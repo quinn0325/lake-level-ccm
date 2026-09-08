@@ -1,35 +1,29 @@
 """条件预测评估：比较各变量选择策略在同一模型族下的预测表现。
 
-每个湖泊运行 15 个方法 = 3 个无外生变量基线 + 6 个变量集 × 2 个模型族：
+每个湖泊运行 13 个方法 = 3 个无外生变量基线 + 5 个变量集 × 2 个模型族：
 
-    无外生基线   SARIMA          Persistence      XGBoost_AR_only
-    变量集(×2)   all_vars   CCM_direct   CCM_ancestors
-                 Stepwise   CCM_neighbor
-
-早期版本只重跑依赖 CCM 图的方法、沿用旧的基线结果；现已全部在同一次运行中
-产出，确保所有方法共用同一份面板、同一套 XGB 超参、同一批 CCM 结果。
+    无外生基线   SARIMA        Persistence      XGBoost_AR_only
+    变量集(×2)   all_vars      Stepwise
+                 CCM_direct    CCM_ancestors    CCM_neighbor
 
 两域滞后
 --------
-因果域 d ∈ [-12, +12] 求 argmax ρ(d)，得 obs_lag；预测特征的滞后须落在
-预测域 d ∈ [1, 12]（d=0 需要预测起点当期的真实值）。因果最优落在 d=0 的边
-**不整条丢弃**，而是在预测域内重新求最优（forecast_constrained_lag）——
-丢弃会损失该关系在预测可用范围内的全部信息。湖内湖间上游筛选均放宽到
-signed lag >= 0，由下游统一重新求最优——direct、ancestors、neighbor 三个分支
-一律如此（ancestors 分支的这一步为 2026-08-31 补上，此前遗漏，见
-ccm_full_pipeline.select_ancestor_lags 的说明）。
+因果域 d ∈ [-12, +12] 求 argmax ρ(d)，得 obs_lag；预测特征的滞后须落在预测域
+d ∈ [1, 12]（d=0 需要预测起点当期的真实值）。因果最优落在 d=0 的边**不整条丢弃**，
+而是在预测域内重新求最优（forecast_constrained_lag）——丢弃会损失该关系在预测
+可用范围内的全部信息。direct、ancestors、neighbor 三个分支一律如此。
 
 基线的独立性
 ------------
 All_vars / Stepwise 的滞后由与目标水位的滞后 Pearson 相关确定
-(select_all_var_lags_xcorr, 1..12)，**不使用任何 CCM 信息**。原实现沿用
-CCM 的 lag_scan，使基线无偿继承 CCM 的滞后识别，令 RQ3 被系统性低估。
+（select_all_var_lags_xcorr，1..12），**不使用任何 CCM 信息**。若让基线沿用 CCM
+的滞后识别，它就无偿继承了 CCM 贡献的主要部分，RQ3 会被系统性低估。
 
 长缺口筛选
 ----------
-训练窗口内最长连续缺口 > MAX_FILLABLE_GAP_MONTHS 的变量整体不纳入候选，
-覆盖全部策略（含 all_vars 与邻居湖水位），且必须在 stepwise
-前向选择之前施加——详见 _filter_long_gap_vars 与 _load_neighbor_series。
+训练窗口内最长连续缺口 > MAX_FILLABLE_GAP_MONTHS 的变量整体不纳入候选，覆盖全部
+策略（含 all_vars 与邻居湖水位），且必须在 stepwise 前向选择之前施加——见
+_filter_long_gap_vars 与 _load_neighbor_series。
 
 跑法
 ----
@@ -40,7 +34,7 @@ CCM 的 lag_scan，使基线无偿继承 CCM 的滞后识别，令 RQ3 被系统
     results/connectivity_full_pairwise_ccm_results.csv
 
 输出（本地 results/ 与 Modal Volume 各一份）
-    forecast_synchrony_filtered_full_results.csv      140 行，含 arima_order
+    forecast_synchrony_filtered_full_results.csv      单次切分，含 arima_order
     forecast_synchrony_filtered_rolling_results.csv   滚动起点，h = 1/3/6/12
     forecast_synchrony_filtered_dm_results.csv        DM 检验，含 BH 校正的 p_fdr
     forecast_synchrony_filtered_selected_lags.csv     各策略选中的变量与滞后
@@ -103,17 +97,17 @@ EMBED_PARAMS_ABS = f"{DATA_ROOT}/lake_results/full_pipeline_v2/embed_params_corr
 WITHIN_ORIGINAL_INPUT = f"{OUT_DIR}/ccm_all_edges_merged_fdr.csv"
 INTER_ORIGINAL_INPUT = f"{OUT_DIR}/connectivity_full_pairwise_ccm_results.csv"
 
-# 上面两个是**容器内**路径（Volume 挂载在 /data）。
-# local_entrypoint 在本机执行，读不到 /data，必须用包内 results/ 下的副本。
-# 原脚本本有 LOCAL_* 常量作此区分，此前清理旧诊断表常量时误删，导致
-# 本地入口去读容器路径而报 FileNotFoundError——此处恢复。
-# 必须惰性求值：容器里本文件被放在 /root/ 下，没有 parents[2]，
-# 模块级计算会在 import 时抛 IndexError。仅本地入口需要这两个路径。
+# 上面两个是**容器内**路径（Volume 挂载在 /data）。local_entrypoint 在本机执行、
+# 读不到 /data，必须用包内 results/ 下的副本。必须惰性求值：容器里本文件放在
+# /root/ 下，没有 parents[2]，模块级计算会在 import 时抛 IndexError。
 def _local_input(name: str) -> str:
     return str(Path(__file__).resolve().parents[2] / "results" / name)
 
-# 旧的 signed-lag 诊断表已不再需要：统一带符号扫描后，主结果的 obs_lag
-# 即全局最优、causal_evidence 已内含时序规则。
+FORECAST_LAKES = [
+    "Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake",
+    "Rainy_Lake", "Lake_of_the_Woods", "Playgreen_Lake", "Kiskitto_Lake",
+    "Sipiwesk_Lake", "Split_Lake",
+]
 
 LOCAL_OUT_DIR = "results"
 OUTPUT_NAMES = {
@@ -202,9 +196,8 @@ def _filtered_within_edges(pd, input_path=WITHIN_ORIGINAL_INPUT):
     sig["obs_lag"] = pd.to_numeric(sig["obs_lag"], errors="coerce")
     sig["obs_rho"] = pd.to_numeric(sig["obs_rho"], errors="coerce")
     # 此处只要求 d ≥ 0（d < 0 已由时序保留规则排除）。
-    # **不在这里丢弃 d = 0 的边**——那样会让下游的 forecast_constrained_lag
-    # 永远收不到它们（实测：过滤在前、重新求最优在后，导致后者从未触发）。
-    # d = 0 的边交由下游在预测域 [1, 12] 内重新求最优滞后。
+    # **不在这里丢弃 d = 0 的边**：那样下游的 forecast_constrained_lag 永远
+    # 收不到它们。d = 0 交由下游在预测域 [1, 12] 内重新求最优滞后。
     sig = sig[sig["obs_lag"].notna() & (sig["obs_lag"] >= 0)].copy()
     return pd.DataFrame(
         {
@@ -222,9 +215,7 @@ def _filtered_within_edges(pd, input_path=WITHIN_ORIGINAL_INPUT):
 def _filtered_interlake_edges(pd, input_path=INTER_ORIGINAL_INPUT):
     """取湖间因果网络中的边（理由同 _filtered_within_edges）。
 
-    注意：旧实现对湖间额外要求 lag>=1、湖内要求 lag>=0，两处口径不一致且未见于
-    方法论。现统一由 causal_evidence 承担（d>=0 保留，d=0 标注 unresolved），
-    全流程口径唯一。
+    湖内湖间同一口径：由 causal_evidence 承担（d>=0 保留，d=0 标注 unresolved）。
     """
     df = pd.read_csv(input_path)
     sig = df[df["causal_evidence"].map(_as_bool)].copy()
@@ -297,10 +288,7 @@ def _filter_long_gap_vars(p, panel_deseason, lag_sets, lake_name):
 def _load_neighbor_series(p, panel_deseason, neighbor_lags, lake_name):
     """加载邻居湖水位、对齐到本湖面板索引，并施加与本湖变量相同的长缺口规则。
 
-    邻居序列原本在建模处才加载，绕过了 _filter_long_gap_vars，导致
-    CCM_neighbor 使用了训练期长缺口的邻居（实测 Kiskitto_Lake 缺口 13 个月，
-    被 Lake_of_the_Woods / Playgreen_Lake / Split_Lake 三个湖当作预测变量）。
-    同一份数据、不同策略适用不同数据质量标准会使方法间比较失去公平性。
+    邻居必须和本湖的外生变量适用同一条数据质量标准，否则方法间比较不公平。
 
     缺口在 **reindex 之后**测量：模型看到的是对齐到本湖日历的那条序列，
     邻居自身日历上的缺口长度未必相同。
@@ -562,12 +550,10 @@ def run_lake_synchrony_filtered(
                 "nse": result["nse"],
                 "pbias": result.get("pbias"),
                 "n_eval": result["n_eval"],
-                # 无外生变量的基线(SARIMA/Persistence/XGBoost_AR_only)其 used_lags 为 None，
-                # 直接 len() 会抛 TypeError（上一行已用 if used_lags 做了同类保护，此处原先漏掉）。
+                # 无外生基线的 used_lags 为 None，直接 len() 会抛 TypeError。
                 "n_selected_vars": len(used_lags) if used_lags else 0,
-                # 记录实际使用的 ARIMA 阶数：SARIMA/SARIMAX 的阶数搜索在不同
-                # 容器宿主上不完全可复现，把阶数写进结果表既便于核对，也是
-                # sarima_orders.json 的产生来源。XGBoost/Persistence 无此字段。
+                # 记录实际用的 ARIMA 阶数：阶数搜索在不同容器宿主上不完全
+                # 可复现，写进结果表便于核对。XGBoost/Persistence 无此字段。
                 "arima_order": str(result.get("order")) if "order" in result else None,
                 "arima_seasonal_order": (str(result.get("seasonal_order"))
                                          if "seasonal_order" in result else None),
@@ -575,10 +561,9 @@ def run_lake_synchrony_filtered(
                 "n_foresight_free_months": free_months,
                 "frac_foresight_free": free_months / p.FORECAST_HORIZON,
             })
-            # 三分支分派，与 ccm_full_pipeline.py:1910-1917 一致。
             # Persistence 不拟合模型、结果里没有 "model" 键，送进
-            # rolling_origin_sarimax 会抛 KeyError: 'model'——共享库为它
-            # 专门提供了 rolling_origin_persistence。
+            # rolling_origin_sarimax 会抛 KeyError；共享库为它单独提供了
+            # rolling_origin_persistence。
             if name.startswith("XGBoost"):
                 rolling = p.rolling_origin_xgb(result)
             elif name == "Persistence":
@@ -731,29 +716,22 @@ def main():
 
     started = time.time()
     out_dir_local, out_dir_remote = LOCAL_OUT_DIR, OUT_DIR
-    # 必须读合并步骤写出的正规文件名：run_within_lake_ccm.py / run_inter_lake_ccm.py
-    # 的 merge 阶段写的就是这两个名字。曾一度读手工下载的 *_v3 副本，导致重跑 CCM
-    # 后合并写的是正规文件、而预测仍读旧副本，会静默地用过期因果网络跑新预测。
+    # 读 merge 阶段写出的正规文件名（run_within_lake_ccm.py / run_inter_lake_ccm.py
+    # 写的就是这两个）。读任何手工下载的副本都可能静默地用上过期的因果网络。
     within_edges = _filtered_within_edges(pd, _local_input("ccm_all_edges_merged_fdr.csv"))
     inter_edges = _filtered_interlake_edges(
         pd, _local_input("connectivity_full_pairwise_ccm_results.csv"))
     print(f"Filtered within-lake edges: {len(within_edges)}", flush=True)
     print(f"Filtered inter-lake edges: {len(inter_edges)}", flush=True)
 
-    lakes = [
-        "Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake",
-        "Rainy_Lake", "Lake_of_the_Woods", "Playgreen_Lake", "Kiskitto_Lake",
-        "Sipiwesk_Lake", "Split_Lake",
-    ]
+    lakes = FORECAST_LAKES
 
     print("Tuning XGBoost hyperparameters once globally...", flush=True)
     xgb_params = tune_hyperparams.remote()
     print(f"Selected XGBoost parameters: {xgb_params}", flush=True)
 
-    # return_exceptions=True：单个湖泊失败时返回异常对象而非抛出。
-    # 默认行为下任一输入失败会让 .map() 抛异常、本地入口崩溃，
-    # Modal 随即取消其余全部在途任务——2026-08-27 的 CCM 阶段已多次因此全批作废。
-    # 预测阶段没有分片落盘机制，一旦全批取消需从头重跑，因此这层保护尤为必要。
+    # return_exceptions=True：单湖失败时返回异常对象而非抛出。默认行为下任一
+    # 输入失败就会让 .map() 抛异常、本地入口崩溃，Modal 随即取消其余在途任务。
     results = list(
         run_lake_synchrony_filtered.map(
             lakes,
@@ -787,10 +765,8 @@ def main():
         "dm": dm_df,
         "selected": pd.DataFrame(selected_rows),
     }
-    # 先把四个文件全部落到本地，再推 Volume。
-    # 原实现是「本地写一个→远程写一个」交替进行，而远程写依赖客户端存活；
-    # 2026-08-27 实测客户端在写完第一个文件后退出，导致 rolling/dm/selected 三个
-    # 结果丢失、10 个湖泊的计算白跑。本地写不依赖任何远程调用，先写完即可保底。
+    # 先把四个文件全部落到本地，再推 Volume：远程写依赖客户端存活，客户端中途
+    # 退出会丢掉尚未推送的结果；本地写不依赖任何远程调用，先写完即可保底。
     os.makedirs(out_dir_local, exist_ok=True)
     for key, frame in outputs.items():
         local_path = os.path.join(out_dir_local, OUTPUT_NAMES[key])
@@ -809,37 +785,20 @@ def main():
 
 
 # ---------------------------------------------------------------------------
-# 服务端编排入口（2026-08-31 新增）：客户端可断开，本机关机不影响运行
+# 服务端编排入口：客户端可断开，本机关机不影响运行
 # ---------------------------------------------------------------------------
-# 为什么需要它
-# ------------
-# 上面的 main() 是 local_entrypoint：.map() 的聚合、DM-FDR、四个 CSV 的写出
-# 全部发生在**客户端本机**。`modal run --detach` 只保活服务端的函数调用，
-# 客户端一旦退出（合盖休眠、关机），聚合与写出这一段就没有了——2026-08-27
-# 实测过一次：客户端写完第一个文件后退出，rolling/dm/selected 三个结果丢失。
+# main() 是 local_entrypoint，.map() 的聚合、DM-FDR、四个 CSV 的写出全部发生在
+# **客户端本机**；`modal run --detach` 只保活服务端的函数调用，客户端一退出
+# （合盖、关机）这一段就没有了。orchestrate() 把整段编排搬进容器完成，客户端
+# 只负责 spawn 后立即退出。
 #
-# orchestrate() 把整段编排搬进容器：湖泊级 .map()、逐湖分片落盘、合并、
-# BH-FDR、写 Volume 全在服务端完成。客户端只负责 spawn 后立即退出。
+# 编排容器本身也可能被抢占，所以每个湖算完立刻写成 Volume 上的 JSON 分片并
+# commit；retries 重跑时跳过已完成的湖，只补在途的。
 #
-# 抗抢占
-# ------
-# 编排容器本身可能被抢占（CCM 阶段吃过这个亏）。因此每个湖算完立即把结果写成
-# Volume 上的 JSON 分片并 commit；retries 触发重跑时跳过已完成的湖，只补在途的。
-#
-# 跑法
-# ----
 #     modal run --detach code/04_forecast/modal_forecast_synchrony_filtered.py::detached
 #
-# 取回结果（跑完后在本机执行）
-# ----------------------------
+# 取回结果：
 #     modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_*.csv results/
-
-FORECAST_LAKES = [
-    "Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake",
-    "Rainy_Lake", "Lake_of_the_Woods", "Playgreen_Lake", "Kiskitto_Lake",
-    "Sipiwesk_Lake", "Split_Lake",
-]
-
 
 def _jsonable(obj):
     """numpy 标量 → Python 标量。分片必须存成真正的数字，否则合并后

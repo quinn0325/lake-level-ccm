@@ -62,7 +62,7 @@ from statsmodels.stats.multitest import multipletests
 from ccm_modal_app import (
     LAKES, REGULATION_STATIONS, REGULATION_SUBPERIODS, VARS,
     START_YEAR, END_YEAR, STATION_COORDS, LAKE_OUTLET_STATION,
-    LAKE_NAME_SEARCH_TERM, LAKE_RESOLVE_COUNTRY,
+    LAKE_NAME_SEARCH_TERM,
 )
 
 WSC_BASE_URL = "https://wateroffice.ec.gc.ca/services/monthly_data/csv/inline"
@@ -282,7 +282,9 @@ def resolve_lake_area_bbox(lake_name, hydrolakes_gdf, hydrobasins_gdf):
     和process_lake_modal（正式流程）共用，避免两边各写一份、容易不同步。
     返回(hylak_id, lake_cells, basin_cells, area_bbox)；hylak_id为None表示解析失败。"""
     ref_lonlat = STATION_COORDS[LAKE_OUTLET_STATION.get(lake_name) or LAKES[lake_name]["stations"][0]]
-    country = LAKE_RESOLVE_COUNTRY.get(lake_name, "Canada")
+    # 十个研究湖泊全在加拿大境内。跨境湖需要关掉国家过滤（HydroLAKES 会把
+    # 整个湖标成对岸国家），本研究没有这种情况。
+    country = "Canada"
     hylak_id, _candidates = resolve_hylak_id(hydrolakes_gdf, LAKE_NAME_SEARCH_TERM[lake_name], ref_lonlat, country=country)
     if hylak_id is None:
         return None, None, None, None

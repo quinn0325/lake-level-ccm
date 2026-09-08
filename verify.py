@@ -117,7 +117,8 @@ def check_derivations():
     section("Derived outputs regenerate identically")
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "repo"
-        # 只复制派生所需的输入与代码，输出目录留空，确保比对的是新生成的文件
+        # Copy only the inputs and the code. Leaving the output directories
+        # empty is the point: otherwise we would compare files against themselves.
         work.mkdir(parents=True)
         for d in ("code", "results", "lake_pkls"):
             shutil.copytree(ROOT / d, work / d,
@@ -127,7 +128,8 @@ def check_derivations():
                    CCM_EMBED_PARAMS=str(work / "results"
                                         / "embed_params_corrected.json"))
 
-        # 顺序与 run_local.stage_figures 一致：表之间有依赖，字母序是错的。
+        # Same order as run_local.stage_figures. These have dependencies on each
+        # other and alphabetical order gets it wrong.
         chain = ["07_tables/build_ch4_tables.py",
                  "07_tables/table_C1_supported_drivers.py",
                  "07_tables/table_4_2_dm_maintext.py",
@@ -202,8 +204,9 @@ def check_ccm_runs():
     detail = (f"rho {float(row['obs_rho']):.4f} vs published {float(ref.obs_rho):.4f}, "
               f"lag {int(row['obs_lag'])} vs {int(ref.obs_lag)}, "
               f"{time.time() - t0:.0f}s")
-    # rho 与 lag 由观测序列的滞后扫描决定，与替代序列数量无关，应当完全一致；
-    # p 值在 3 个替代序列下毫无意义，这里不比对它。
+    # rho and the lag come from the observed lag scan, not the surrogates, so
+    # they should match exactly. The p value from 3 surrogates is meaningless
+    # and is not compared.
     record("cross-map skill and optimal lag match the published edge",
            PASS if d_rho < 1e-6 and same_lag else FAIL, detail)
 

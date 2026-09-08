@@ -1,26 +1,27 @@
-"""本地运行入口——不需要 Modal 账户。
+"""Run every stage locally. No Modal account needed.
 
-各阶段的计算函数本身与后端无关（Modal 脚本里的 `@app.function` 只是并行调度的
-包装，函数体是普通 Python）。本驱动直接调用这些函数，用多进程并行，
-数据起点为随包提供的 `lake_pkls/*.pkl`。
+The stage functions are backend-neutral -- the `@app.function` decorators in the
+Modal scripts only wrap ordinary Python. This driver calls those same function
+bodies with multiprocessing, starting from the `lake_pkls/*.pkl` shipped here.
 
-用法
+Usage
 ----
     python run_local.py --stage all
     python run_local.py --stage within --workers 8
     python run_local.py --stage figures
 
-阶段
-----
-    embed     重算嵌入参数            → results/embed_params_corrected.json
-    within    湖内 CCM 420 条边       → results/ccm_all_edges_merged_fdr.csv
-    inter     湖间 CCM 90 条边        → results/connectivity_full_pairwise_ccm_results.csv
-    forecast  预测对比                → results/forecast_*_results.csv
-    figures   全部图与表              → results/figures/、ch4_tables/
-    all       依次执行以上全部
+Stages
+------
+    embed     embedding dimensions    -> results/embed_params_corrected.json
+    within    420 within-lake edges   -> results/ccm_all_edges_merged_fdr.csv
+    inter     90 between-lake edges   -> results/connectivity_full_pairwise_ccm_results.csv
+    forecast  the 13 method variants  -> results/forecast_*_results.csv
+    figures   every figure and table  -> results/figures/, ch4_tables/, appendices/
+    all       the above, in order
 
-耗时（单核参考）：within 约 8–18 小时；`--workers` 开到 CPU 核数可压缩到 2–4 小时。
-within 阶段支持断点续跑：已完成的边会跳过（见 --resume）。
+Timing: `within` is 8-18 hours on one core, 2-4 with `--workers` set to your core
+count. It writes each edge as it finishes and skips completed ones on a rerun,
+so it is safe to interrupt.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ for sub in ("", "01_shared", "00_data_generation", "03_inter_lake_ccm",
 RESULTS = PKG / "results"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
-# 让共享库把输入输出都指向包内，而不是任何绝对路径
+# Point the shared library inside this package rather than at any absolute path
 os.environ.setdefault("CCM_PKL_DIR", str(PKG / "lake_pkls"))
 os.environ.setdefault("CCM_OUT_DIR", str(RESULTS))
 os.environ.setdefault("CCM_EMBED_PARAMS", str(RESULTS / "embed_params_corrected.json"))
@@ -53,7 +54,7 @@ def _log(msg):
 
 # ---------------------------------------------------------------- embed
 def stage_embed():
-    """重算嵌入参数（τ 固定为 config.EMBED_TAU，仅需选 E）。"""
+    """Recompute embedding parameters. tau is fixed, so only E is searched."""
     import ast
     import json
     import pickle
@@ -70,7 +71,7 @@ def stage_embed():
         if isinstance(node, ast.FunctionDef) and node.name in want:
             exec(compile(ast.Module([node], []), "ccm_lib.py", "exec"), ns)
             got.add(node.name)
-    assert not (want - got), f"未能从 ccm_lib.py 抽取: {want - got}"
+    assert not (want - got), f"could not extract from ccm_lib.py: {want - got}"
 
     merged = {}
     for lake in config.LAKES:
@@ -94,10 +95,10 @@ def stage_embed():
                 tau=config.EMBED_TAU, candidate_E=config.EMBED_E_CANDIDATES)
             out[var] = {"E": int(prm["E"]), "tau": int(prm["tau"])}
         merged[lake] = out
-        _log(f"  {lake}: {len(out)} 个变量")
+        _log(f"  {lake}: {len(out)} variables")
     (RESULTS / "embed_params_corrected.json").write_text(
         json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
-    _log(f"已写出 {RESULTS / 'embed_params_corrected.json'}")
+    _log(f"wrote {RESULTS / 'embed_params_corrected.json'}")
 
 
 # ---------------------------------------------------------------- within
@@ -123,7 +124,8 @@ def stage_within(workers, n_surrogates):
     tasks = [(lk, c, e, n_surrogates)
              for lk in config.LAKES
              for c in config.VARIABLES for e in config.VARIABLES if c != e]
-    _log(f"湖内 CCM：{len(tasks)} 条边，{workers} 进程并行，n_surrogates={n_surrogates}")
+    _log(f"within-lake CCM: {len(tasks)} edges, {workers} processes, "
+         f"n_surrogates={n_surrogates}")
     rows, done = [], 0
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_one_within_edge, t): t for t in tasks}
@@ -135,7 +137,8 @@ def stage_within(workers, n_surrogates):
     df = p.apply_fdr_and_causal_evidence(pd.DataFrame(rows))
     out = RESULTS / "ccm_all_edges_merged_fdr.csv"
     df.to_csv(out, index=False)
-    _log(f"完成：{len(df)} 条边，{int(df['causal_evidence'].sum())} 条通过 → {out}")
+    _log(f"done: {len(df)} edges, "
+         f"{int(df['causal_evidence'].sum())} supported -> {out}")
 
 
 # ---------------------------------------------------------------- inter
@@ -158,7 +161,7 @@ def stage_inter(workers, n_surrogates):
     pairs = list(itertools.combinations(config.LAKES, 2))
     tasks = [(a, b, n_surrogates) for a, b in pairs] + \
             [(b, a, n_surrogates) for a, b in pairs]
-    _log(f"湖间 CCM：{len(tasks)} 条边，{workers} 进程并行")
+    _log(f"between-lake CCM: {len(tasks)} edges, {workers} processes")
     rows = []
     with ProcessPoolExecutor(max_workers=workers) as ex:
         for f in as_completed([ex.submit(_one_inter_edge, t) for t in tasks]):
@@ -168,18 +171,20 @@ def stage_inter(workers, n_surrogates):
         tuple(sorted([r.cause_lake, r.effect_lake])) in conn for r in df.itertuples()]
     out = RESULTS / "connectivity_full_pairwise_ccm_results.csv"
     df.to_csv(out, index=False)
-    _log(f"完成：{len(df)} 条边，{int(df['causal_evidence'].sum())} 条通过 → {out}")
+    _log(f"done: {len(df)} edges, "
+         f"{int(df['causal_evidence'].sum())} supported -> {out}")
 
 
 # ---------------------------------------------------------------- forecast
 def stage_forecast(variant="main"):
-    """预测对比——本地版。
+    """The forecasting stage, run locally.
 
-    `modal_forecast_synchrony_filtered.py` 的 `main()` 是 local_entrypoint，
-    读写的是 Modal Volume 上的 /data 路径，没有 Modal 账户跑不了。但被 `.map()`
-    调度的两个函数体本身与后端无关：容器专用的只有 `_configure_module()` 里的
-    三个路径。这里把它换成包内路径，再用 Modal 函数对象的 `.local()`
-    直接在本机调用同一份函数体，因此与云端跑法逐行同源。
+    `main()` in modal_forecast_synchrony_filtered.py is a local_entrypoint that
+    reads and writes /data on a Modal Volume, so it needs an account. The two
+    functions it maps over are not container-specific though -- the only things
+    that are live in `_configure_module()`. Swap those for local paths and call
+    the same function bodies through Modal's `.local()`, and you get the same
+    code path as the cloud run.
     """
     import pandas as pd
     sys.path.insert(0, str(CODE / "04_forecast"))
@@ -192,8 +197,9 @@ def stage_forecast(variant="main"):
         p.EMBED_PARAMS_PATH = str(RESULTS / "embed_params_corrected.json")
         return p
     F._configure_module = _configure_local
-    # _original_within_direct_lags / _original_neighbor_lags 在函数体内直接读这
-    # 两个模块级常量（容器路径），不走参数，因此必须一并改掉。
+    # _original_within_direct_lags and _original_neighbor_lags read these two
+    # module-level constants directly rather than taking them as arguments, so
+    # they have to be redirected too.
     F.WITHIN_ORIGINAL_INPUT = str(RESULTS / "ccm_all_edges_merged_fdr.csv")
     F.INTER_ORIGINAL_INPUT = str(
         RESULTS / "connectivity_full_pairwise_ccm_results.csv")
@@ -203,11 +209,12 @@ def stage_forecast(variant="main"):
         pd, str(RESULTS / "ccm_all_edges_merged_fdr.csv"))
     inter = F._filtered_interlake_edges(
         pd, str(RESULTS / "connectivity_full_pairwise_ccm_results.csv"))
-    _log(f"变体 {variant}：湖内边 {len(within)} 条，湖间边 {len(inter)} 条")
+    _log(f"variant {variant}: {len(within)} within-lake edges, "
+         f"{len(inter)} between-lake edges")
 
-    _log("全局调一次 XGBoost 超参数……")
+    _log("tuning XGBoost hyperparameters once, globally")
     xgb_params = F.tune_hyperparams.local()
-    _log(f"  选定 {xgb_params}")
+    _log(f"  selected {xgb_params}")
 
     import config
     wr, ir = within.to_dict("records"), inter.to_dict("records")
@@ -215,7 +222,7 @@ def stage_forecast(variant="main"):
     failed = []
     for lake in config.LAKES:
         _log(f"  {lake}")
-        try:                                   # 单湖失败不作废其余九个湖
+        try:                                   # one lake failing must not void the other nine
             res = F.run_lake_synchrony_filtered.local(lake, xgb_params, wr, ir, variant)
         except Exception as exc:
             failed.append((lake, f"{type(exc).__name__}: {exc}"))
@@ -223,7 +230,7 @@ def stage_forecast(variant="main"):
         for key in rows:
             rows[key].extend(res.get(key, []))
     for lake, err in failed:
-        _log(f"  失败：{lake} — {err}")
+        _log(f"  failed: {lake} -- {err}")
 
     outputs = {"full": pd.DataFrame(rows["full_rows"]),
                "rolling": pd.DataFrame(rows["rolling_rows"]),
@@ -233,38 +240,38 @@ def stage_forecast(variant="main"):
     for key, frame in outputs.items():
         path = out_dir / F.OUTPUT_NAMES[key]
         frame.to_csv(path, index=False)
-        _log(f"已写出 {path}（{len(frame)} 行）")
+        _log(f"wrote {path} ({len(frame)} rows)")
 
 
 # ---------------------------------------------------------------- figures
 def stage_figures():
     import runpy
-    # 顺序有依赖，不能按文件名排序跑（字母序会让 build_appendices 早于
-    # table_C1_supported_drivers，而前者要读后者写出的 TC1）：
-    #   build_ch4_tables  →  T1/T3/T4/T5/T6/T7
-    #   table_*           →  TC1、T4_2、T4X_*（各自依赖上面几张）
-    #   figure_*          →  读 T1/T5/T6/T7
-    #   build_appendices* →  读 TC1、T3、T4、T6、T7
+    # Do not sort these by filename. Alphabetically build_appendices comes before
+    # table_C1_supported_drivers, which writes the TC1 table it reads. Order is:
+    #   build_ch4_tables   writes T1/T3/T4/T5/T6/T7 from results/
+    #   table_*            write TC1, T4_2, T4X_*, reading the above
+    #   figure_*           read T1/T5/T6/T7
+    #   build_appendices*  read TC1, T3, T4, T6, T7
     TABLES_FIRST = ["build_ch4_tables.py", "table_C1_supported_drivers.py",
                     "table_4_2_dm_maintext.py", "table_4_4_forecast_summary.py",
                     "table_4_4_matched_rmse.py"]
-    TABLES_LAST = ["build_appendices.py", "build_appendices_en.py",
-                   "build_appendices_xlsx.py"]
+    TABLES_LAST = ["build_appendices.py", "build_appendices_en.py"]
     scripts = ([CODE / "07_tables" / n for n in TABLES_FIRST]
                + sorted((CODE / "06_figures").glob("figure_*.py"))
                + [CODE / "07_tables" / n for n in TABLES_LAST])
     known = {p.name for p in scripts}
     missed = sorted(p for p in (CODE / "07_tables").glob("*.py")
                     if p.name not in known)
-    if missed:                       # 新增脚本时提醒把它排进上面的顺序里
-        _log(f"  注意：未排序的表脚本 {[p.name for p in missed]}，追加在最后")
+    if missed:                       # nudge whoever adds a script to place it above
+        _log(f"  unordered table scripts {[p.name for p in missed]}, "
+             f"appended at the end")
         scripts += missed
     for script in scripts:
-        _log(f"运行 {script.name}")
+        _log(f"running {script.name}")
         try:
             runpy.run_path(str(script), run_name="__main__")
-        except Exception as exc:                      # 单张图失败不中断其余
-            _log(f"  跳过（{type(exc).__name__}: {exc}）")
+        except Exception as exc:                      # one bad figure must not stop the rest
+            _log(f"  skipped ({type(exc).__name__}: {exc})")
 
 
 def main():
@@ -278,7 +285,7 @@ def main():
     order = (["embed", "within", "inter", "forecast", "figures"]
              if a.stage == "all" else [a.stage])
     for st in order:
-        _log(f"===== 阶段 {st} =====")
+        _log(f"===== stage {st} =====")
         if st == "embed":
             stage_embed()
         elif st == "within":
@@ -289,7 +296,7 @@ def main():
             stage_figures()
         elif st == "forecast":
             stage_forecast()
-    _log("全部完成")
+    _log("done")
 
 
 if __name__ == "__main__":

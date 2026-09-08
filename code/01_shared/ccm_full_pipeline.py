@@ -1,195 +1,74 @@
-"""
-CCM因果分析 + 湖泊连通性 + 预测模型对比 —— 完整流程整合版
+"""Shared library: preprocessing, CCM, surrogates, FDR, forecasting.
 
-覆盖范围：配置 -> 原始数据获取(WSC水位/调控流量；ERA5部分见下方说明) -> 预处理
-(含本次会话新增的异常值剔除+长短缺失分级处理) -> within-lake CCM显著性检验(滞后感知
-max-over-lags + IAAFT替代数据) -> 湖泊间连通性检验 -> XGBoost超参数调优 -> 预测模型
-对比(SARIMA/SARIMAX/XGBoost/Persistence，含滚动起点评估、Diebold-Mariano检验)。
+Everything downstream of data acquisition lives here. The stage scripts in
+02_/03_/04_ are thin wrappers that parallelise calls into this module, so if two
+stages ever disagree about how a panel is built, the bug is in here.
 
-============================================================
-关于ERA5数据获取的说明(重要，不是遗漏)
-============================================================
-本文件包含WSC水位/调控流量的抓取代码(fetch_wsc_station_level/fetch_lake_regulation_flow，
-纯requests+pandas，比较独立)。但ERA5气候数据(T/P/R/SWE/Evap)的下载+按湖泊集水区/湖体
-掩膜提取，依赖：
-  1. CDS(Copernicus Climate Data Store)账号凭证
-  2. HydroLAKES/HydroBASINS地理数据文件(shapefile，体积较大)
-  3. geopandas/shapely等地理处理重依赖
-这部分本次会话完全没有改动过，逻辑在ccm_lib.py::try_fetch_era5_land / extract_masked_series /
-resolve_lake_area_bbox 和 ccm_modal_app.py::process_lake_modal 里，原样保留在那两个文件中，
-没有转抄到这里——转抄一遍既验证不了正确性，也没有必要(它不受本次任何修复影响)。
+Entry point is a `{lake}_result.pkl` written by ccm_modal_app.process_lake_modal,
+holding wide_wl and real_predictors. ERA5 download and catchment masking are not
+duplicated here -- they live in ccm_lib.py and need CDS credentials plus the
+HydroLAKES/HydroBASINS shapefiles.
 
-本文件假设 {lake}_result.pkl 已经存在(即 process_lake_modal 已经跑过一次，产出了
-wide_wl / real_predictors / embed_params 等字段)，从这里往后的全部处理都基于这份缓存。
-默认路径 PKL_DIR = "/tmp/lake_pkls"，如果没有，需要先用：
-    modal volume get ccm-data lake_results/{lake}_result.pkl /tmp/lake_pkls/
-把10个湖的pkl下载到本地。
+Design decisions that change how results should be read
+-------------------------------------------------------
+Deseasonalisation uses training-period monthly climatology only. Computing it
+over the full record and splitting afterwards leaks: a test-period value would
+be inside the mean that is then subtracted from it. build_variable_panel() and
+deseasonalize() therefore require an explicit train_end.
 
-============================================================
-本次会话相对原始ccm_lib.py流程的修复/新增(汇总)
-============================================================
-1. CCM零位移初筛bug修复：不再只测零位移显著性，改为扫描0-12个月全部候选滞后取
-   最大rho(max-over-lags)，配合IAAFT替代数据做同样的滞后扫描构成公平null分布。
-2. panel_raw跨变量dropna bug修复：不用缓存里的panel_raw，从wide_wl+real_predictors
-   重新构建完整日历面板，保留真实NaN，不做跨变量dropna。
-3. effect嵌入方向符号修复：显式嵌入用effect(t+lag), effect(t+lag-tau), ...(往过去看)，
-   不能写成+k*tau(会偷看未来)。
-4. XGBoost测试期递归预测：不再让WL滞后特征在测试期内偷看真实观测值，逐月递归预测。
-5. XGBoost超参数改为全局一次性时间序列CV调优(只用训练期数据)，不再写死。
-6. 滚动起点(rolling-origin)评估：测试期内逐起点滚动，记录1/3/6/12个月预见期误差，
-   而不是从单条轨迹里累计切片。
-7. 新增Persistence基线+技巧分、Diebold-Mariano显著性检验。
-8. 新增邻居湖泊WL方法：用重新验证过的湖泊间连通性结果(不是旧的connectivity_ccm_chains)。
-9. 长短缺失分级处理：短缺失(<=3个月)才允许插值/前后填充，更长的缺口把这个变量整个
-   从候选池排除，不再无限制ffill/bfill硬填(之前Vaseux_Lake的RegFlow 18年缺口会被
-   这样错误地硬填)。
-10. WL站点异常值剔除：对每个WL站点单独检测"月度骤变+数值本身也历史级异常"的点，
-    设为NaN(比如Kiskitto_Lake 2011年5-8月、Sipiwesk_Lake 2011年5月)，不再让这些
-    点污染多站合成和去季节化。
-11. 去季节化(deseasonalize)train/test切分前信息泄漏修复：之前用全部数据(含测试期)
-    一起算月度气候态均值再切分train/test，测试期的真实值会在被算进"该月气候态均值"
-    的那一刻，把自己的信息注入了这个均值，构成切分前的泄漏。现在deseasonalize()/
-    build_variable_panel()都要求显式传入train_end/forecast_horizon，月度气候态均值
-    只从训练窗口算，同一套均值套用到训练+测试两段。已用合成数据+Kalamalka_Lake
-    真实数据验证：训练期去季节化后均值精确为0(符合"均值就是从这些行本身算出来的"
-    这一构造性质)，测试期均值不再被强制拉到0。
-12. _fill_training_block()"链式limit"过度填补bug修复：原实现是
-    interpolate(limit=3).ffill(limit=3).bfill(limit=3)三次链式调用，每次独立限流、
-    互不知道对方已经填过什么——对一个7个月的缺口(远超3个月上限)，interpolate先线性
-    填3个、ffill从新填出来的值再往后垫3个、bfill再从另一头垫3个，加起来能把整个
-    7个月缺口完全填满、0个NaN剩余(已实测验证)，直接违反"长缺失应整段排除"的设计
-    初衷。改成_fill_series_block()：逐段扫描原始连续NaN游程的真实长度，只有
-    <=limit的游程才填，超过的整段保留NaN。
-13. 测试期外生变量无限制ffill()修复：原来SARIMAX(fit_auto_sarimax_multi)、
-    XGBoost(fit_xgboost_multi)、两个rolling_origin_*函数里，测试期外生变量都是
-    .ffill()不设limit，测试期哪怕连续缺测再长也会被一路拿训练期最后一个观测值
-    垫到底，且部分调用点还只对测试期窄切片单独ffill(如果测试期开头本身就是NaN，
-    窄切片内部找不到锚点可垫，即使训练期紧邻着有合法观测值也补不到)。现在统一改成
-    "先对完整(训练+测试)序列做.ffill(limit=MAX_FILLABLE_GAP_MONTHS)，再切出测试段"。
-14. 长缺失检测(find_long_gap_vars)扫描范围修复：原来只检查训练窗口的最长连续缺口，
-    测试期完全没检查——一个变量训练期缺测很干净，但测试期整段缺测的话，原代码
-    完全发现不了，只会被上面第13条的ffill悄悄垫过去。现在改成检查训练+测试整段
-    时间序列。
-15. KGE指标已整体移除：KGE的β项(β=mean(predicted)/mean(actual))在deseasonalize后
-    的zero-mean anomaly序列上不稳定——原有的NaN guard阈值(|mean(a)|<1e-6)只在
-    mean严格等于0(比如训练期本身，按构造)时才触发，测试期/滚动起点评估窗口的
-    mean通常不是严格0但仍然很接近0，此时β对预测均值的微小扰动极度敏感(实测例子：
-    mean_a=0.001时，预测均值0.05和-0.03——两个都是很小的绝对偏差——算出的β分别是
-    50和-30，跟"β接近1表示无偏"的本意毫无关系)，会把一个其实表现尚可的模型显示成
-    灾难性负分。曾考虑"还原成WL绝对水位再算KGE"，但这样做会让actual和predicted
-    共享同一个更大幅度的季节周期，人为抬高相关系数和标准差比值，且跟RMSE/NSE等
-    其余指标口径不一致(那些还是在anomaly口径上算的)，属于错误的修复方向。
-    最终保留RMSE/MAE/NSE/PBIAS(已有零均值guard)/技巧分/DM检验，均不依赖"均值比值"
-    这个不稳定的量。
-16. N_SURROGATES从200调到500：实测420条边merged_fdr结果，78%的"显著"边卡在
-    N=200的p值分辨率下限(1/201)彼此无法区分，更关键的是实际FDR拒绝边界正好
-    落在N=200的一步量子化跳跃里(p_fdr从0.046跳到0.056)，单个替代数据的随机
-    结果就能翻转某条边的显著性判定。420条边里约70条(17%)当前处于临界区间、
-    判定不稳，调到500(分辨率1/501)后这批边会被更精细地重新定位。
-17. XGBoost递归预测遇到训练窗口内超过MAX_FILLABLE_GAP_MONTHS的长缺口时，原来
-    会直接raise、让整个方法的全部37个月结果作废；改成只跳过真正受影响的那几步
-    (留NaN，不计入评估)。但修复过程中发现一个连带问题：跳过某一步时如果忘记
-    把wl_values这个位置也显式设为NaN，会让WL_lag特征在后续步骤悄悄读到"跳过前
-    残留的测试期真实观测值"，重新打开"递归预测不该偷看测试期真值"这个更早已经
-    修过的泄漏口子——已修正为显式清空。同时发现WL_lag1这类1个月滞后特征一旦
-    某一步失败会永久级联(后续每一步都因WL_lag1回看到NaN而失败，不会自己恢复)，
-    Playgreen_Lake原本因此变成0/37可用月份；最终把MAX_FILLABLE_GAP_MONTHS从
-    3个月调到6个月(半年，独立选定的整数，不是刚好凑Playgreen那5个月缺口的
-    长度)，核实过这个调整不改变任何一个外生候选变量的排除判定，解决后4个湖
-    (Playgreen/Kiskitto/Sipiwesk/Split)递归预测全部0跳过。
-18. Diebold-Mariano检验数据结构修复：原来是在单一起点的37个月完整轨迹(混合了
-    horizon 1~37全部预见期)上做DM检验，却把h(Newey-West滞后阶数的依据)写死成1
-    ——这跟DM检验(Diebold & Mariano 1995)设计针对的"多个不同起点、固定horizon"
-    场景完全不符，h=1还等于假设这37个点互相独立，而同一条递归轨迹里horizon 30
-    和31的预测误差几乎肯定强相关。改成在已经算好的滚动起点结果(按horizon
-    1/3/6/12月分别pooling多个起点)上做DM，h就是对应的真实horizon；为此给
-    rolling_origin_xgb/rolling_origin_sarimax的输出加上了起点(t0)标记，两个
-    方法比较前先按t0取交集对齐(不同方法因为NaN/缺口跳过情况不同，成功产出
-    预测的起点集合可能不完全一样，不能假设list位置天然对应)；另外补了一个
-    Persistence基线的滚动起点版本(它本身不需要拟合、之前没有可复用的
-    rolling_origin_*函数)，让涉及Persistence的两个DM比较也能用同样口径。
-19. "完美强迫"披露：所有用到外生变量的方法，测试期外生变量特征用的是真实观测值
-    (不是模型自己对外生变量的预测)——这本身是刻意的实验设计(测的是"如果完美
-    知道驱动变量，因果关系能带来多少预测信息量"，不是"能不能部署成实时预警
-    系统")，但必须让读者能区分哪些结果是"完全真实、不偷看未来"、哪些是
-    "假设完美预知驱动变量"。full_rows新增min_exog_lag/n_foresight_free_months/
-    frac_foresight_free三列；rolling_rows新增requires_foresight布尔列——只要
-    某个方法的最小外生变量滞后lag满足h<=lag，那个horizon的预测用到的外生变量
-    特征值就是预测起点之前已经真实发生的历史数据，不需要预知未来；一旦h>lag
-    才是assuming perfect foresight的oracle结果。没有外生变量的方法(Persistence/
-    SARIMA/XGBoost_AR_only)全部标None，不受此问题影响。
-20. find_long_gap_vars()自我修正：本次会话早些时候曾把它从"只查训练期"改成
-    "查训练+测试全序列"，理由是"只查训练期的话测试期长缺口会被ffill悄悄垫
-    过去检测不到"——这个理由没错，但那个实现方式引入了另一种更隐蔽的泄漏：
-    用测试期的缺测情况决定"要不要把这个变量纳入候选池"，等于模型选择阶段
-    偷看了未来(test-aware model selection)。已改回只查训练窗口；测试期真的
-    出现长缺口时，改成在预测阶段优雅处理(fit_xgboost_multi的递归预测循环、
-    两个rolling_origin_*函数已经能做到只跳过受影响的具体月份/起点，不会
-    无限垫底也不会拖累其余月份；SARIMAX单次整体predict()做不到部分跳过，
-    测试期缺口超限时让整个方法诚实报错，而不是提前回避这个变量)。
-21. 负滞后选择bug修复：select_ancestor_lags/select_all_var_lags里，
-    lag_scan(...,lags=range(-12,13))扫描的是包含负数的全部滞后，原来直接对
-    全部结果取全局argmax(scan["rho"].idxmax())，如果全局最优恰好是负滞后就把
-    整个变量丢掉——即使旁边有一个rho几乎一样高的正滞后完全可用(比如lag=-2
-    rho=0.61、lag=+3 rho=0.60，全局argmax选中不可用的lag=-2导致变量被排除，
-    但lag=+3明明可以直接拿来做预测特征)。负滞后不是"次优选项"，是根本不能用
-    ——lag_scan()里l<0意味着用cause[t]预测effect[t-2]这种"结果已经在原因之前
-    发生"的关系，对预测毫无意义。新增best_positive_lag()，只在lag>=0的范围内
-    取argmax，不再对全局最优做事后过滤。
-22. 【已废弃，未纳入正文】湖泊间连通性检验曾新增PCMCI条件化共同区域气候的对照
-    分析(见"6b"一节)。按 2026-08-26 决定不纳入论文，改由"有水道连接 vs 无水道
-    连接"的分组对照承担混杂讨论；相关函数保留备查，主流程不调用。原说明：纯CCM完全没有控制两湖是否共享同一片区域
-    气候(7对湖泊里6对的气候变量两两相关系数0.93~1.00，基本是同一份信号)，
-    PCMCI把两湖WL+两湖气候变量算术平均放进同一个系统做条件独立性检验，用
-    合成数据验证过方法本身可靠(能正确识别"仅由共同驱动造成的虚假相关"和
-    "条件化后依然存在的真实链接"两种情况)。跟纯CCM是并排对照，不是互相替代
-    ——PCMCI默认线性假设，CCM能处理非线性但没做混淆控制。
-23. XGBoost特征工程从"WL_lag{1,2,3,6,12}+每个外生变量单点滞后值"扩充为WL状态
-    特征(滞后+一阶/三阶变化率+3/6个月滚动均值/标准差)+外生变量antecedent
-    window特征(单点滞后值+该滞后往前3/6个月滚动均值)，见"XGBoost特征工程"一节。
-    关键原则：全部方法(AR_only/CCM_top/CCM_direct/CCM_ancestors/all_vars/
-    CCM_neighbor)用同一套构造函数，只有喂哪些外生变量因方法而异——否则"CCM
-    模型比AR-only准"这类结论会分不清是CCM筛选真的有效、还是CCM方法额外被喂了
-    更好的人工特征这两种解释，实验就不公平了。刻意没做的事：没加日历特征、
-    没加变量间交互项、没加更多滚动窗口(训练样本量~300个月量级，特征数已经
-    不宜再涨)。训练时向量化构造(build_wl_state_features)和递归预测时逐步查表
-    构造(wl_state_features_at/wl_state_features_from_getter)两套代码路径，
-    已用合成数据验证在同样输入下逐位数值完全一致(0个mismatch)。
-24. Climatology基线方法整体移除：喂给它的wl_series已经是deseasonalize()处理过
-    的距平序列，训练期均值按构造精确为0，fit_climatology()在这份数据上再算一次
-    "月度气候态"，算出来的12个月度均值几乎全部是1e-16量级的浮点噪声(实测最大
-    的一个月也只有0.014)——季节信息在距平被造出来的那一刻就已经被拿走了，这个
-    方法退化成了"预测值恒为0"，跟名字暗示的"利用季节规律做预测"完全不是一回事，
-    实测RMSE(0.208)还比Persistence(0.135)差。用真实数据验证过：只要评估口径
-    保持在距平空间(这是本项目的既定设计，避免"预测季节"这种trivial技巧虚高
-    预测精度)，不管在原始WL上算气候态、还是在距平上算，误差序列在代数上完全
-    等价(raw空间下"actual-气候态预测"的误差 == 距平空间下的真实距平值本身，
-    逐位验证过完全相等)，没有办法在不推翻"距平空间评估"这个更早的设计决策的
-    前提下让Climatology恢复原本的意义，因此整体移除，不再是9个基线方法之一。
+Long gaps drop a variable rather than being filled. find_long_gap_vars() checks
+the training window only. Checking the test period too would catch more gaps,
+but deciding whether a variable is eligible using test-period data is test-aware
+model selection -- a subtler leak than the one it fixes. Test-period gaps are
+instead handled at prediction time: the XGBoost recursion and both
+rolling_origin_* functions skip the affected origins, and SARIMAX, which cannot
+skip inside a single predict(), fails honestly.
 
-============================================================
-未处理的已知局限(本次会话明确讨论过、决定暂不处理，如实列出)
-============================================================
-- 结构性断点(Pettitt检验发现多个湖泊的WL/RegFlow存在真实的、非季节性的水平转变，
-  推测对应真实的调控体制变化)：当前去季节化仍用整段月度均值，未做断点分段处理。
-  经评估对预测模型影响较小(测试期通常完整落在断点后一侧)，主要影响CCM显著性检验，
-  用户决定暂不处理。
-- Playgreen_Lake/Kiskitto_Lake共用同一调控站(05UB009)的RegFlow记录：这是原始代码
-  有意为之、有物理依据的选择(两湖同受Jenpeg大坝回水顶托)，不是bug；已验证两湖WL
-  相关性很弱(r=-0.197)，两湖各自的RegFlow->WL发现仍是有意义的、不冗余的结果。
-- Evap在2022-2023呈现跨湖泊系统性异常(7个湖同时出现)，推测是ERA5数据源本身在这段
-  时间的系统性问题(可能是ERA5转ERA5T近实时数据的过渡期)，未做修正。
-- Rainy_Lake两个WL站点在2002年12月互相不印证，未处理。
-- WSC官方质量标记(Symbol/Symbole字段)已确认对已知异常月份为空，无法用于确认/排除。
-- (本次修复第14条排查时发现)Nelson河链4个湖里有3个(Playgreen_Lake/Kiskitto_Lake/
-  Sipiwesk_Lake)的WL在2024年整年(1-12月)完全缺测，恰好落在37个月测试窗口内部——
-  相当于这3个湖的测试期真实有效样本比其余7个湖少了近1年。_forecast_metrics()的
-  NaN掩码(mask = actual.notna() & predicted.notna())已经会正确地把这些月份从
-  RMSE/NSE等指标计算里剔除，不会被虚构的"实际值"污染评估结果，但每个方法结果里
-  都应该同时看n_eval这一列——这3个湖的n_eval会明显偏低，报告结果时需要注明。
+Forecast features must lag by at least one month, and only non-negative lags are
+eligible. best_positive_lag() takes the argmax over lag >= 0 rather than filtering
+a global argmax afterwards: a variable whose global best is at lag -2 may still
+have a perfectly usable peak at +3, and discarding it would throw away real
+information. A negative lag means the effect moved before the cause, which is not
+something you can forecast with.
 
-本地跑，零费用：
-    /tmp/forecast_venv/bin/python3 ccm_full_pipeline.py
+Evaluation is in anomaly space throughout. This is deliberate -- scoring against
+raw water level lets a model look good by predicting the seasonal cycle. It also
+means the Climatology baseline degenerates to predicting zero, which is why it
+is not among the baselines.
+
+Perfect foresight is disclosed, not hidden. Methods with exogenous variables use
+observed driver values over the test period, not forecasts of them. The question
+being asked is how much predictive information the causal relationships carry,
+not whether this could be deployed as a live warning system. `min_exog_lag`,
+`n_foresight_free_months` and `requires_foresight` mark which results need
+foresight: when h <= lag the driver values were already history at the forecast
+origin and nothing is assumed.
+
+Diebold-Mariano runs on the rolling-origin results, pooled by horizon, with the
+Newey-West lag set to that horizon. Running it on a single 37-month trajectory
+with h=1 would assume errors at horizons 30 and 31 are independent, which they
+are not. Methods are aligned on the intersection of their origins before
+comparison, since they skip different ones.
+
+Known limitations, not fixed
+----------------------------
+Playgreen, Kiskitto and Sipiwesk have no water level at all for 2024, which sits
+inside the 37-month test window. The NaN mask in _forecast_metrics() keeps those
+months out of the scores, but n_eval for those three lakes is correspondingly
+lower and should be quoted alongside their errors.
+
+Pettitt tests find real non-seasonal level shifts in several lakes, probably
+genuine changes in regulation. Deseasonalisation still uses one climatology per
+series. Test periods usually fall entirely on one side of a break, so the effect
+on forecasting is small; the effect on CCM significance is not characterised.
+
+Evaporation shows a systematic anomaly across seven lakes in 2022-2023, most
+likely an ERA5/ERA5T transition artefact. Left uncorrected.
+
+Playgreen and Kiskitto share one regulated-outflow gauge (05UB009). That is
+physical, not a bug -- both sit behind the Jenpeg dam -- and their water levels
+are almost uncorrelated (r = -0.20), so the two RegFlow -> WL findings are not
+redundant.
 """
 
 from __future__ import annotations

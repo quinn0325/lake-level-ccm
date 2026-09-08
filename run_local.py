@@ -239,10 +239,26 @@ def stage_forecast(variant="main"):
 # ---------------------------------------------------------------- figures
 def stage_figures():
     import runpy
-    # 顺序有依赖：图与附录读的都是 ch4_tables/ 里的中间表，必须先生成。
-    ch4 = CODE / "07_tables" / "build_ch4_tables.py"
-    scripts = [ch4] + sorted((CODE / "06_figures").glob("figure_*.py")) + \
-              [f for f in sorted((CODE / "07_tables").glob("*.py")) if f != ch4]
+    # 顺序有依赖，不能按文件名排序跑（字母序会让 build_appendices 早于
+    # table_C1_supported_drivers，而前者要读后者写出的 TC1）：
+    #   build_ch4_tables  →  T1/T3/T4/T5/T6/T7
+    #   table_*           →  TC1、T4_2、T4X_*（各自依赖上面几张）
+    #   figure_*          →  读 T1/T5/T6/T7
+    #   build_appendices* →  读 TC1、T3、T4、T6、T7
+    TABLES_FIRST = ["build_ch4_tables.py", "table_C1_supported_drivers.py",
+                    "table_4_2_dm_maintext.py", "table_4_4_forecast_summary.py",
+                    "table_4_4_matched_rmse.py"]
+    TABLES_LAST = ["build_appendices.py", "build_appendices_en.py",
+                   "build_appendices_xlsx.py"]
+    scripts = ([CODE / "07_tables" / n for n in TABLES_FIRST]
+               + sorted((CODE / "06_figures").glob("figure_*.py"))
+               + [CODE / "07_tables" / n for n in TABLES_LAST])
+    known = {p.name for p in scripts}
+    missed = sorted(p for p in (CODE / "07_tables").glob("*.py")
+                    if p.name not in known)
+    if missed:                       # 新增脚本时提醒把它排进上面的顺序里
+        _log(f"  注意：未排序的表脚本 {[p.name for p in missed]}，追加在最后")
+        scripts += missed
     for script in scripts:
         _log(f"运行 {script.name}")
         try:

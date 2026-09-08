@@ -31,6 +31,7 @@ but not reported.
 | `results/` | Key numerical outputs, for checking a rerun against ours |
 | `figures/`, `appendices/` | Every figure and appendix table in the dissertation |
 | `run_local.py` | Single local driver for all analysis stages |
+| `verify.py` | Four-minute check: regenerates every derived table, dataset file and figure and compares them byte for byte, then recomputes one CCM edge |
 
 Exploratory work that does not appear in the dissertation is not included.
 
@@ -58,7 +59,9 @@ wants to reproduce only the analysis can start at step 4 below.
 
 ## 3. Software environment
 
-Python 3.12 (3.10–3.12 all tested).
+Python 3.12, the version every result here was produced on and the only one
+this repository has been tested against. 3.13 and later will not work, because
+`numpy==1.26.4` has no wheels for them.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

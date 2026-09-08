@@ -10,6 +10,24 @@ forecasting analyses, the code that produces every figure and table in the
 dissertation, and the key numerical outputs so that a reader can check their own
 run against ours.
 
+## Quick start
+
+The full analysis takes 8-18 hours, almost all of it in the CCM stage. You do
+not need to run it to check this work. Instead:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python verify.py
+```
+
+`verify.py` takes about four minutes. It regenerates every table, dataset file
+and figure in this repository from the inputs in `results/` and `lake_pkls/` and
+compares them byte for byte against the committed copies, then recomputes one
+real CCM edge and checks its cross-map skill and optimal lag against the
+published value. Use `--quick` to skip the last step and finish in about a
+minute. Section 5 explains how to launch the full run if you want it.
+
 ---
 
 ## 1. Project overview
@@ -71,7 +89,10 @@ reproduce only the analysis can start from `lake_pkls/` and skip steps 1–2.
 
 ## 3. Software and environment
 
-Python 3.12 (3.10–3.12 all tested). Install with:
+Python 3.12, which is what every result here was produced on and the only
+version this repository has been tested against. 3.10 and 3.11 should work;
+3.13 and later will not, because `numpy==1.26.4` has no wheels for them.
+Install with:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -125,6 +146,7 @@ exactly. Pin `xgboost` yourself if you need bitwise agreement across machines.
 lake-level-ccm/
 ├── README.md
 ├── requirements.txt
+├── verify.py                     four-minute check that this repository is intact
 ├── run_local.py                  local driver for every analysis stage
 │
 ├── code/
